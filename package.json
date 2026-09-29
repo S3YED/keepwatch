@@ -3,26 +3,74 @@
   "version": "0.1.0",
   "description": "Vidalytics-style VSL player and watch analytics for any Vimeo link: smart autoplay, fast progress bar, resume, timed CTA, A/B variants.",
   "license": "MIT",
+  "author": "Weblyfe (https://weblyfe.nl)",
+  "homepage": "https://github.com/S3YED/keepwatch#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/S3YED/keepwatch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/S3YED/keepwatch/issues"
+  },
+  "keywords": [
+    "vsl",
+    "video",
+    "vimeo",
+    "player",
+    "analytics",
+    "vidalytics",
+    "autoplay",
+    "web-component",
+    "funnel"
+  ],
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "unpkg": "./dist/keepwatch.js",
   "jsdelivr": "./dist/keepwatch.js",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./react": { "types": "./dist/react.d.ts", "default": "./dist/react.js" },
-    "./server": { "types": "./dist/server.d.ts", "default": "./dist/server.js" },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "default": "./dist/react.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    },
     "./keepwatch.js": "./dist/keepwatch.js"
   },
-  "sideEffects": ["./dist/index.js", "./dist/keepwatch.js"],
+  "sideEffects": [
+    "./dist/index.js",
+    "./dist/keepwatch.js"
+  ],
   "scripts": {
     "build": "bun run build.ts && tsc -p tsconfig.build.json",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun test && bun run build"
   },
-  "peerDependencies": { "react": ">=18" },
-  "peerDependenciesMeta": { "react": { "optional": true } },
-  "dependencies": { "@vimeo/player": "^2.30.4" },
-  "devDependencies": { "@types/react": "^19.0.0", "react": "^19.0.0", "typescript": "^5.6.0", "@types/bun": "latest" }
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@vimeo/player": "^2.30.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "react": "^19.0.0",
+    "typescript": "^5.6.0",
+    "@types/bun": "latest"
+  }
 }

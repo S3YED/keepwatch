@@ -12,6 +12,7 @@ import { createElement, useEffect, type CSSProperties, type ReactNode } from "re
  */
 
 export type KeepwatchProps = {
+  /** Vimeo, YouTube or Loom link, or an MP4/WebM/HLS URL. */
   src?: string;
   /** A/B variants: [{ id, src, weight }]. */
   variants?: { id: string; src: string; weight?: number }[];
@@ -26,6 +27,14 @@ export type KeepwatchProps = {
   poster?: string;
   lang?: string;
   barCurve?: number;
+  /** Settings-menu speeds, e.g. [1, 1.25, 1.5]; [] hides the menu. */
+  speeds?: number[];
+  /** Loop the muted preview over its first N seconds ("10"). */
+  previewLoop?: string;
+  unmuteTitle?: string;
+  unmuteText?: string;
+  exitPoster?: string;
+  smartPause?: boolean;
   /** Accessible name of the video. */
   label?: string;
   className?: string;
@@ -55,6 +64,12 @@ export function Keepwatch(props: KeepwatchProps) {
     lang: props.lang,
     "bar-curve": props.barCurve === undefined ? undefined : String(props.barCurve),
     label: props.label,
+    speeds: props.speeds?.join(" "),
+    "preview-loop": props.previewLoop,
+    "unmute-title": props.unmuteTitle,
+    "unmute-text": props.unmuteText,
+    "exit-poster": props.exitPoster,
+    "smart-pause": props.smartPause ? "" : undefined,
     class: props.className,
   };
   return createElement("keep-watch", { ...attrs, style: props.style, suppressHydrationWarning: true });

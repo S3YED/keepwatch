@@ -1,20 +1,19 @@
 /**
  * Keepwatch for collectors and dashboards: the beat contract with no DOM.
  * Validate with `parseBeat`, store with `mergeBeat`, chart with `summarise`.
- * `parseVimeo` and `vimeoPlainUrl` are here too, for server-rendered embeds.
+ * `parseSource` and `plainUrl` are here too, for server-rendered fallback embeds.
  */
 export {
   BEAT_MAX_BYTES,
   mergeBeat,
   mmss,
   parseBeat,
-  parseVimeo,
   summarise,
-  vimeoPlainUrl,
   type Beat,
   type Stats,
   type ViewMeasures,
 } from "./core.ts";
+export { parseSource, plainUrl, providerName, type Source } from "./sources.ts";
 
 /**
  * Is this Origin allowed to report? `allowed` holds hostnames; a leading

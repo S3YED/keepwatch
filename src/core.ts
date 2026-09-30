@@ -3,11 +3,13 @@
  * element (element.ts) and the collector (server.ts) share one definition.
  *
  * What the player does, and why:
- * - Smart autoplay: starts muted with a "click for sound" overlay. The click
+ * - Smart autoplay: starts muted with a "click to unmute" card and no progress
+ *   bar, so the preview never looks like minutes already missed. The click
  *   restarts from 0:00 with sound, so nobody hears the pitch from the middle.
  * - A progress bar that runs fast early and slow late. A long video that
  *   looks a third done after the first minute loses fewer people.
- * - No seeking: the bar is a display, not a scrubber.
+ * - No seeking: the bar is a display, not a scrubber. Rewind 10s is the one
+ *   way back, and it never moves `furthest`.
  * - Resume: a returning viewer continues where they left off.
  * - Timed CTA: the call to action appears when the offer starts, and stays
  *   for anyone who already reached that point.
@@ -15,35 +17,15 @@
  * - One analytics row per viewing session, updated as the viewer watches.
  */
 
+import type { Source } from "./sources.ts";
+
 export type Variant = {
   /** Stable id, stored with every view. Never reuse one for a different cut. */
   id: string;
-  vimeoId: string;
-  /** Unlisted videos carry an access hash (`vimeo.com/123/abc` or `?h=abc`). */
-  hash?: string;
+  source: Source;
   /** Relative share of new viewers. 0 keeps a variant out of new assignments. */
   weight: number;
 };
-
-/** `https://vimeo.com/123`, `vimeo.com/123/abcdef`, `player.vimeo.com/video/123?h=abc`, or a bare id. */
-export function parseVimeo(input: string): { vimeoId: string; hash?: string } | null {
-  const s = input.trim();
-  if (/^\d{3,12}$/.test(s)) return { vimeoId: s };
-  let url: URL;
-  try {
-    url = new URL(s.startsWith("http") ? s : `https://${s}`);
-  } catch {
-    return null;
-  }
-  if (!/(^|\.)vimeo\.com$/.test(url.hostname)) return null;
-  const parts = url.pathname.split("/").filter(Boolean);
-  const at = parts.findIndex((p) => /^\d{3,12}$/.test(p));
-  if (at < 0) return null;
-  const vimeoId = parts[at];
-  const next = parts[at + 1];
-  const hash = url.searchParams.get("h") ?? (next && /^[0-9a-f]{6,20}$/i.test(next) ? next : undefined);
-  return hash ? { vimeoId, hash } : { vimeoId };
-}
 
 /** "6:11", "1:02:03", "371" or "371s" in seconds; null when unreadable. */
 export function parseTime(input: string | null | undefined): number | null {
@@ -62,35 +44,10 @@ export function mmss(sec: number): string {
   return h ? `${h}:${String(m).padStart(2, "0")}:${r}` : `${m}:${r}`;
 }
 
-/**
- * The embed URL for our own chrome: Vimeo's controls, title and byline off,
- * `dnt=1` so Vimeo does not track viewers (no consent gate needed), and
- * `muted=1` when we start without a click, because browsers only autoplay
- * silent video. `autoplay=0` is for a resume: the player seeks, then plays.
- */
-export function vimeoEmbedUrl(
-  v: Pick<Variant, "vimeoId" | "hash">,
-  opts: { muted: boolean; autoplay: boolean },
-): string {
-  const params = new URLSearchParams({
-    dnt: "1",
-    controls: "0",
-    autoplay: opts.autoplay ? "1" : "0",
-    muted: opts.muted ? "1" : "0",
-    playsinline: "1",
-    autopause: "0",
-    title: "0",
-    byline: "0",
-    portrait: "0",
-    keyboard: "0",
-  });
-  if (v.hash) params.set("h", v.hash);
-  return `https://player.vimeo.com/video/${v.vimeoId}?${params}`;
-}
-
-/** The plain Vimeo player with its own controls: the fallback link. */
-export function vimeoPlainUrl(v: Pick<Variant, "vimeoId" | "hash">): string {
-  return `https://player.vimeo.com/video/${v.vimeoId}?dnt=1${v.hash ? `&h=${v.hash}` : ""}`;
+/** The player's time counter: "00:18", "06:11", "1:02:03". Elapsed only, never the total. */
+export function clock(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  return s >= 3600 ? mmss(s) : mmss(s).padStart(5, "0");
 }
 
 /**

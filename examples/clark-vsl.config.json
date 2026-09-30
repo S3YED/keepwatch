@@ -1,0 +1,13 @@
+{
+  "src": "https://vimeo.com/1226915932",
+  "video": "clark-vsl",
+  "label": "Clark video",
+  "autoplay": "inview",
+  "ctaAt": "6:11",
+  "ctaText": "Book your call",
+  "ctaHref": "#book",
+  "smartPause": true,
+  "resume": "ask",
+  "collect": "https://getclark.app/api/vsl",
+  "placement": "home"
+}

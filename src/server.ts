@@ -1,5 +1,6 @@
 /**
- * Keepwatch for collectors and dashboards: the beat contract with no DOM.
+ * Keepwatch without a DOM: the beat contract for collectors and dashboards,
+ * and the config tools (validateConfig, embedCode) for builders and agents.
  * Validate with `parseBeat`, store with `mergeBeat`, chart with `summarise`.
  * `parseSource` and `plainUrl` are here too, for server-rendered fallback embeds.
  */
@@ -14,6 +15,7 @@ export {
   type ViewMeasures,
 } from "./core.ts";
 export { parseSource, plainUrl, providerName, type Source } from "./sources.ts";
+export { FIELDS, configToAttributes, elementHtml, embedCode, validateConfig, type KeepwatchConfig } from "./config.ts";
 
 /**
  * Is this Origin allowed to report? `allowed` holds hostnames; a leading

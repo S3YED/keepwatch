@@ -27,6 +27,9 @@ import { CSS } from "./styles.ts";
  *   <keep-watch src="https://vimeo.com/1226915932" cta-at="6:11"
  *               cta-href="#book" collect="https://getclark.app/api/vsl"></keep-watch>
  *
+ * Every attribute is listed, with defaults, in SETTINGS.md (generated from
+ * src/config.ts). The common ones:
+ *
  * Attributes
  *   src         Vimeo, YouTube or Loom link, or an MP4/WebM/HLS URL.
  *   variants    A/B instead of src: JSON [{"id":"a","src":"…","weight":1}, …].
@@ -61,7 +64,7 @@ import { CSS } from "./styles.ts";
  * Until it starts, the frame is a poster and no provider player exists.
  */
 
-type Phase = "idle" | "resume" | "loading" | "muted" | "playing" | "paused" | "ended" | "error";
+type Phase = "idle" | "resume" | "loading" | "muted" | "playing" | "paused" | "ended" | "error" | "expired";
 type Mode = "load" | "inview" | "click" | "none";
 
 const BEAT_EVERY_SEC = 30;
@@ -126,6 +129,28 @@ function readVariants(host: HTMLElement): Variant[] {
   return source ? [{ id: slug(sourceKey(source)), weight: 1, source }] : [];
 }
 
+const ALL_CONTROLS = "play rewind sound time speed fullscreen";
+
+function isTouch(): boolean {
+  return window.matchMedia?.("(pointer: coarse)").matches ?? false;
+}
+
+/** A same-origin link keeps the landing page's utm_*; other origins get none. */
+function withUtm(href: string): string {
+  try {
+    const url = new URL(href, location.href);
+    if (url.origin !== location.origin) return href;
+    const here = new URLSearchParams(location.search);
+    for (const k of ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"]) {
+      const val = here.get(k);
+      if (val && !url.searchParams.has(k)) url.searchParams.set(k, val);
+    }
+    return url.pathname + url.search + url.hash;
+  } catch {
+    return href;
+  }
+}
+
 function readSpeeds(host: HTMLElement): number[] {
   const raw = host.getAttribute("speeds");
   if (raw === null) return DEFAULT_SPEEDS;
@@ -165,6 +190,10 @@ export class KeepWatchElement extends HTMLElement {
   private graceTimer = 0;
   private idleTimer = 0;
   private clockTimer = 0;
+  private endTimer = 0;
+  private endLeft = 0;
+  /** Whether the in-player CTA is inside its show/hide window, to re-render on the edges. */
+  private ctaWindow = false;
   /** Paused by smart-pause (tab hidden), so it plays on when the tab returns. */
   private hiddenPause = false;
   /** The start poster, kept so an exit poster can swap back. */
@@ -237,12 +266,33 @@ export class KeepWatchElement extends HTMLElement {
     return parseTime(this.getAttribute("cta-at"));
   }
 
+  private get ctaUntil(): number | null {
+    return parseTime(this.getAttribute("cta-until"));
+  }
+
+  private get pauseCta(): boolean {
+    return this.getAttribute("cta-mode") === "pause";
+  }
+
+  private get canPause(): boolean {
+    return !this.hasAttribute("no-pause") || this.getAttribute("no-pause") === "false";
+  }
+
+  private flag(name: string): boolean {
+    return this.hasAttribute(name) && this.getAttribute(name) !== "false";
+  }
+
   private get controllable(): boolean {
     return this.provider?.controllable ?? false;
   }
 
   private init() {
-    ({ lang: this.locale, t: this.t } = stringsFor(this.getAttribute("lang") ?? document.documentElement.lang));
+    ({ lang: this.locale, t: this.t } = stringsFor(this.getAttribute("lang") || document.documentElement.lang));
+    const expires = Date.parse(this.getAttribute("expires") ?? "");
+    if (Number.isFinite(expires) && Date.now() >= expires) {
+      this.setPhase("expired");
+      return;
+    }
     const variants = readVariants(this);
     if (variants.length === 0) {
       console.error("[keepwatch] needs a `src` or `variants` from a supported provider");
@@ -291,7 +341,7 @@ export class KeepWatchElement extends HTMLElement {
     const onHide = () => {
       const hidden = document.visibilityState === "hidden";
       if (hidden) this.beat(true);
-      if (!this.hasAttribute("smart-pause") || !this.media) return;
+      if (!this.flag("smart-pause") || !this.canPause || !this.media) return;
       if (hidden && this.phase === "playing") {
         this.hiddenPause = true;
         void this.media.pause().catch(() => {});
@@ -339,6 +389,7 @@ export class KeepWatchElement extends HTMLElement {
     window.clearTimeout(this.graceTimer);
     window.clearTimeout(this.idleTimer);
     window.clearInterval(this.clockTimer);
+    window.clearInterval(this.endTimer);
   }
 
   private unmount() {
@@ -373,8 +424,13 @@ export class KeepWatchElement extends HTMLElement {
   // ------------------------------------------------------------ lifecycle
 
   private begin(trigger: "auto" | "click") {
-    const at = resumeFrom(load(this.video).pos, this.duration || Number.POSITIVE_INFINITY);
+    const mode = this.getAttribute("resume") ?? "ask";
+    const at = mode === "off" ? null : resumeFrom(load(this.video).pos, this.duration || Number.POSITIVE_INFINITY);
     if (at !== null && this.controllable) {
+      if (mode === "auto") {
+        this.start({ sound: trigger === "click", at, resumed: true });
+        return;
+      }
       this.resumeAt = at;
       this.setPhase("resume");
       return;
@@ -395,7 +451,7 @@ export class KeepWatchElement extends HTMLElement {
     const s = this.s;
     s.wantsSound = opts.sound;
     s.audible = false;
-    s.restartOnUnmute = !opts.sound && opts.at === 0;
+    s.restartOnUnmute = !opts.sound && opts.at === 0 && this.getAttribute("unmute-restart") !== "false";
     s.startAt = opts.at;
     s.last = opts.at;
     s.resumed = s.resumed || opts.resumed;
@@ -439,9 +495,15 @@ export class KeepWatchElement extends HTMLElement {
           }
           s.completed = true;
           save(this.video, { pos: this.duration });
-          this.setPhase("ended");
           this.beat();
           this.emit("ended");
+          if (this.getAttribute("end") === "loop") {
+            s.last = 0;
+            void media.seek(0).then(() => media.play()).catch(() => {});
+            return;
+          }
+          this.setPhase("ended");
+          if (this.getAttribute("end") === "redirect") this.countdown();
         },
         time: (sec, d) => {
           if (this.media === media) this.tick(sec, d);
@@ -466,6 +528,13 @@ export class KeepWatchElement extends HTMLElement {
     if (first) {
       s.started = true;
       this.beat();
+      const speed = Number(this.getAttribute("speed"));
+      if (speed > 0 && speed !== 1 && this.controllable) {
+        void media.setRate(speed).then((ok) => {
+          if (ok) this.rate = speed;
+          this.renderChrome();
+        });
+      }
     }
     if (!this.controllable) {
       // Handed over to the provider's own player: sound is on, the clock times the CTA.
@@ -484,7 +553,7 @@ export class KeepWatchElement extends HTMLElement {
       if (this.media !== media) return;
       if (silent) {
         s.wantsSound = false;
-        s.restartOnUnmute = s.startAt === 0;
+        s.restartOnUnmute = s.startAt === 0 && this.getAttribute("unmute-restart") !== "false";
         this.muted = true;
       } else {
         s.audible = true;
@@ -521,6 +590,11 @@ export class KeepWatchElement extends HTMLElement {
       save(this.video, { variant: v.id, pos: seconds });
     }
     this.checkCta(Math.max(s.furthest, load(this.video).furthest));
+    const inWindow = this.ctaInWindow();
+    if (inWindow !== this.ctaWindow) {
+      this.ctaWindow = inWindow;
+      this.render();
+    }
     this.checkMilestones();
     if (s.watched - s.beatAtWatched >= BEAT_EVERY_SEC) {
       s.beatAtWatched = s.watched;
@@ -533,9 +607,40 @@ export class KeepWatchElement extends HTMLElement {
     if (s.ctaShown || !ctaVisible(reached, this.ctaAt)) return;
     s.ctaShown = true;
     unlockGates();
+    if (this.flag("cta-exit-fullscreen") && document.fullscreenElement) void document.exitFullscreen().catch(() => {});
     this.render();
     this.beat();
     this.emit("cta-shown");
+  }
+
+  /** Timed CTA: reached, and not yet past `cta-until`. */
+  private ctaInWindow(): boolean {
+    const until = this.ctaUntil;
+    const reached = ctaVisible(Math.max(this.s.furthest, load(this.video).furthest), this.ctaAt);
+    return reached && (until === null || this.time < until);
+  }
+
+  /** end="redirect": count down on the end screen, then go. */
+  private countdown() {
+    const href = this.getAttribute("end-redirect");
+    if (!href) return;
+    this.endLeft = Math.max(0, Math.floor(Number(this.getAttribute("end-countdown") ?? 5)) || 0);
+    window.clearInterval(this.endTimer);
+    const step = () => {
+      if (this.phase !== "ended") {
+        window.clearInterval(this.endTimer);
+        return;
+      }
+      if (this.endLeft <= 0) {
+        window.clearInterval(this.endTimer);
+        location.href = withUtm(href);
+        return;
+      }
+      this.render();
+      this.endLeft--;
+    };
+    step();
+    this.endTimer = window.setInterval(step, 1000);
   }
 
   /** keepwatch:progress at 25/50/75/90% reached with sound, once each per session. */
@@ -608,6 +713,8 @@ export class KeepWatchElement extends HTMLElement {
     }
     this.muted = false;
     claimAudio(this);
+    const fs = this.getAttribute("fullscreen-on-unmute");
+    if (fs === "always" || (fs === "mobile" && isTouch()) || (fs === "desktop" && !isTouch())) this.fullscreen();
     // Switch the view now; the provider's play/pause events keep it honest after.
     this.setPhase("playing");
     this.beat();
@@ -623,7 +730,7 @@ export class KeepWatchElement extends HTMLElement {
     const media = this.media;
     if (!media) return;
     this.hiddenPause = false;
-    if (this.phase === "playing") void media.pause().catch(() => {});
+    if (this.phase === "playing" && this.canPause) void media.pause().catch(() => {});
     else if (this.phase === "paused") {
       claimAudio(this);
       void media.play().catch(() => {});
@@ -681,6 +788,7 @@ export class KeepWatchElement extends HTMLElement {
     const media = this.media;
     if (!media) return;
     this.s.last = 0;
+    window.clearInterval(this.endTimer);
     claimAudio(this);
     void media
       .seek(0)
@@ -722,23 +830,7 @@ export class KeepWatchElement extends HTMLElement {
   private cta(): HTMLAnchorElement | null {
     const href = this.getAttribute("cta-href");
     if (!href) return null;
-    let target = href;
-    if (!href.startsWith("#")) {
-      // Carry the landing page's utm_* to the next page, never to another origin.
-      try {
-        const url = new URL(href, location.href);
-        if (url.origin === location.origin) {
-          const here = new URLSearchParams(location.search);
-          for (const k of ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"]) {
-            const val = here.get(k);
-            if (val && !url.searchParams.has(k)) url.searchParams.set(k, val);
-          }
-          target = url.pathname + url.search + url.hash;
-        }
-      } catch {
-        // Leave the href as written.
-      }
-    }
+    const target = href.startsWith("#") ? href : withUtm(href);
     const a = el("a", { class: "btn", href: target, part: "cta" }, this.getAttribute("cta-text") ?? this.t.cta);
     const tab = this.getAttribute("cta-target");
     if (tab) a.setAttribute("target", tab);
@@ -762,12 +854,17 @@ export class KeepWatchElement extends HTMLElement {
     const t = this.t;
     const phase = this.phase;
     const unlocked = ctaVisible(Math.max(this.s.furthest, load(this.video).furthest), this.ctaAt);
-    const exitPoster = phase === "paused" ? this.getAttribute("exit-poster") : null;
+    const endPoster = phase === "ended" && this.getAttribute("end") === "poster" ? this.getAttribute("end-poster") : null;
+    const exitPoster = phase === "paused" ? this.getAttribute("exit-poster") : endPoster;
     const want = exitPoster ?? this.posterSrc;
     if (want && this.poster.getAttribute("src") !== want) this.poster.src = want;
-    this.poster.hidden = !(phase === "idle" || phase === "resume" || phase === "loading" || exitPoster);
+    this.poster.hidden = !(phase === "idle" || phase === "resume" || phase === "loading" || phase === "expired" || exitPoster);
+    const touch = isTouch();
     const nodes: Node[] = [];
 
+    if (phase === "expired") {
+      nodes.push(el("div", { class: "panel" }, el("p", {}, this.getAttribute("expired-text") || t.expired)));
+    }
     if (phase === "idle") {
       const facade = el("button", { type: "button", class: "facade", "aria-label": t.play }, el("span", { class: "play" }, icon("play")));
       facade.addEventListener("click", this.playClick);
@@ -779,38 +876,34 @@ export class KeepWatchElement extends HTMLElement {
         el(
           "div",
           { class: "panel" },
-          el("p", {}, t.resumeTitle),
+          el("p", {}, this.getAttribute("resume-title") || t.resumeTitle),
           el(
             "div",
             { class: "actions" },
-            this.button(`${t.resumeContinue} (${mmss(at)})`, () => this.start({ sound: true, at, resumed: true })),
-            this.button(t.resumeRestart, () => this.start({ sound: true, at: 0, resumed: false }), "btn ghost"),
+            this.button(`${this.getAttribute("resume-continue") || t.resumeContinue} (${mmss(at)})`, () => this.start({ sound: true, at, resumed: true })),
+            this.button(this.getAttribute("resume-restart") || t.resumeRestart, () => this.start({ sound: true, at: 0, resumed: false }), "btn ghost"),
           ),
         ),
       );
     }
     if (phase === "muted") {
+      const title = (touch && this.getAttribute("unmute-title-mobile")) || this.getAttribute("unmute-title") || t.started;
+      const sub = (touch && this.getAttribute("unmute-text-mobile")) || this.getAttribute("unmute-text") || t.unmute;
       const b = el(
         "button",
-        { type: "button", class: "unmute", "aria-label": `${t.started}. ${t.unmute}` },
-        el(
-          "span",
-          { class: "card" },
-          icon("speaker"),
-          el("span", { class: "title" }, this.getAttribute("unmute-title") ?? t.started),
-          el("span", { class: "sub" }, this.getAttribute("unmute-text") ?? t.unmute),
-        ),
+        { type: "button", class: "unmute", "aria-label": `${title}. ${sub}` },
+        el("span", { class: "card" }, icon("speaker"), el("span", { class: "title" }, title), el("span", { class: "sub" }, sub)),
       );
       b.addEventListener("click", this.unmute);
       nodes.push(b);
     }
-    if ((phase === "playing" || phase === "paused") && this.controllable) {
+    if ((phase === "playing" || phase === "paused") && this.controllable && (this.canPause || phase === "paused")) {
       const surface = el("button", { type: "button", class: "surface", "aria-label": phase === "playing" ? t.pause : t.resume });
       surface.addEventListener("click", this.toggle);
       nodes.push(surface);
     }
     if (phase === "paused") {
-      const cta = unlocked ? this.cta() : null;
+      const cta = unlocked || this.pauseCta ? this.cta() : null;
       nodes.push(
         el(
           "div",
@@ -823,7 +916,9 @@ export class KeepWatchElement extends HTMLElement {
     if (phase === "ended") {
       const cta = this.cta();
       const again = this.controllable ? [this.button(t.replay, this.replay, "btn ghost")] : [];
-      nodes.push(el("div", { class: "panel" }, el("div", { class: "actions" }, ...(cta ? [cta] : []), ...again)));
+      const redirect = this.getAttribute("end") === "redirect" && this.getAttribute("end-redirect");
+      const message = redirect ? [el("p", {}, (this.getAttribute("end-text") || t.redirecting).replace("{s}", String(this.endLeft)))] : [];
+      nodes.push(el("div", { class: endPoster ? "panel soft" : "panel" }, ...message, el("div", { class: "actions" }, ...(cta ? [cta] : []), ...again)));
     }
     if (phase === "error" && this.variant) {
       const name = providerName(this.variant.source.provider);
@@ -835,7 +930,7 @@ export class KeepWatchElement extends HTMLElement {
       const cta = this.cta();
       nodes.push(el("div", { class: "panel" }, el("p", {}, t.error), el("div", { class: "actions" }, open, ...(cta ? [cta] : []))));
     }
-    if (phase === "playing" && unlocked) {
+    if (phase === "playing" && !this.pauseCta && this.ctaInWindow()) {
       const cta = this.cta();
       if (cta) nodes.push(el("div", { class: this.controllable ? "cta" : "cta bare" }, cta));
     }
@@ -848,25 +943,38 @@ export class KeepWatchElement extends HTMLElement {
   /**
    * The control bar, only once sound is on: the muted preview shows the
    * unmute card alone, with no bar that looks like minutes already missed.
+   * `controls` picks the buttons; `no-pause` drops pausing; `bar` the rail.
    */
   private renderChrome() {
     const t = this.t;
     const show = (this.phase === "playing" || this.phase === "paused") && this.controllable;
-    this.chrome.hidden = !show;
-    this.rail.hidden = !show;
+    const want = new Set((this.getAttribute("controls") ?? ALL_CONTROLS).split(/[\s,]+/).filter(Boolean));
+    this.chrome.hidden = !show || want.size === 0;
+    this.rail.hidden = !show || this.getAttribute("bar") === "none";
     this.chrome.classList.toggle("open", this.menuOpen);
+    this.timeLabel = null;
     if (!show) {
-      this.timeLabel = null;
       this.chrome.replaceChildren();
       return;
     }
     const playing = this.phase === "playing";
-    this.timeLabel = el("span", { class: "time", "aria-hidden": "true" }, clock(this.time));
     const full = document.fullscreenElement === this;
+    const group = (cls: string, ...kids: Node[]) => (kids.length ? [el("div", { class: cls }, ...kids)] : []);
 
-    const settings = el("div", { class: "group" });
+    const left: Node[] = [];
+    if (want.has("play") && (this.canPause || !playing)) {
+      left.push(this.ctl(playing ? "pause" : "play", playing ? t.pause : t.resume, this.toggle));
+    }
+    const middle: Node[] = [];
+    if (want.has("rewind")) middle.push(this.ctl("rewind10", t.rewind, this.rewind));
+    if (want.has("sound")) middle.push(this.ctl(this.muted ? "muted" : "volume", this.muted ? t.soundOn : t.mute, this.toggleSound));
+    if (want.has("time")) {
+      this.timeLabel = el("span", { class: "time", "aria-hidden": "true" }, clock(this.time));
+      middle.push(this.timeLabel);
+    }
+    const right: Node[] = [];
     const speeds = readSpeeds(this);
-    if (speeds.length > 0 && !this.rateLocked) {
+    if (want.has("speed") && speeds.length > 0 && !this.rateLocked) {
       const gear = this.ctl("settings", t.settings, () => this.toggleMenu());
       gear.setAttribute("aria-expanded", String(this.menuOpen));
       gear.setAttribute("aria-haspopup", "true");
@@ -878,31 +986,27 @@ export class KeepWatchElement extends HTMLElement {
         item.setAttribute("aria-pressed", String(r === this.rate));
         menu.append(item);
       }
-      settings.append(menu, gear);
+      right.push(menu, gear);
     }
-    settings.append(this.ctl(full ? "minimize" : "maximize", full ? t.exitFullscreen : t.fullscreen, this.fullscreen));
+    if (want.has("fullscreen")) right.push(this.ctl(full ? "minimize" : "maximize", full ? t.exitFullscreen : t.fullscreen, this.fullscreen));
 
     this.chrome.replaceChildren(
       el(
         "div",
         { class: "controls" },
-        el("div", { class: "group wide" }, this.ctl(playing ? "pause" : "play", playing ? t.pause : t.resume, this.toggle)),
-        el(
-          "div",
-          { class: "group" },
-          this.ctl("rewind10", t.rewind, this.rewind),
-          this.ctl(this.muted ? "muted" : "volume", this.muted ? t.soundOn : t.mute, this.toggleSound),
-          this.timeLabel,
-        ),
+        ...group("group wide", ...left),
+        ...group("group", ...middle),
         el("span", { style: "flex:1" }),
-        settings,
+        ...group("group", ...right),
       ),
     );
   }
 
   private paintProgress() {
     const d = this.duration;
-    const curve = Number(this.getAttribute("bar-curve")) || BAR_CURVE;
+    const bar = this.getAttribute("bar");
+    const mobile = isTouch() ? Number(this.getAttribute("bar-curve-mobile")) : 0;
+    const curve = bar === "linear" ? 1 : mobile || Number(this.getAttribute("bar-curve")) || BAR_CURVE;
     this.style.setProperty("--kw-p", String(displayProgress(this.time, d, curve)));
     if (this.timeLabel) this.timeLabel.textContent = clock(this.time);
     if (d > 0) {

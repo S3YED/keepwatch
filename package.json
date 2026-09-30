@@ -1,6 +1,6 @@
 {
   "name": "keepwatch",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Vidalytics-style VSL player and watch analytics for Vimeo, YouTube, Loom and video files: smart autoplay, fast progress bar, resume, timed CTA, A/B variants.",
   "license": "MIT",
   "author": "Weblyfe (https://weblyfe.nl)",
@@ -57,7 +57,9 @@
     "build": "bun run build.ts && tsc -p tsconfig.build.json",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "bun test && bun run build"
+    "prepublishOnly": "bun test && bun run build",
+    "builder": "bun run build && bun scripts/builder.ts",
+    "embed": "bun scripts/embed.ts"
   },
   "peerDependencies": {
     "react": ">=18"

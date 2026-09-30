@@ -24,6 +24,8 @@ export const STRINGS = {
     speed: "Speed",
     normal: "Normal",
     exitFullscreen: "Exit full screen",
+    expired: "This video is no longer available.",
+    redirecting: "Taking you to the next step in {s}…",
   },
   nl: {
     play: "Speel de video af",
@@ -49,6 +51,8 @@ export const STRINGS = {
     speed: "Snelheid",
     normal: "Normaal",
     exitFullscreen: "Volledig scherm sluiten",
+    expired: "Deze video is niet meer beschikbaar.",
+    redirecting: "Je gaat over {s} naar de volgende stap…",
   },
   ru: {
     play: "Смотреть видео",
@@ -74,6 +78,8 @@ export const STRINGS = {
     speed: "Скорость",
     normal: "Обычная",
     exitFullscreen: "Выйти из полноэкранного режима",
+    expired: "Это видео больше недоступно.",
+    redirecting: "Переходим к следующему шагу через {s}…",
   },
 } as const;
 

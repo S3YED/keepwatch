@@ -74,6 +74,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid #fff; outline-offset:
   text-align: center; color: #fff; background: rgba(0,0,0,.62);
   -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
 }
+.panel.soft { background: rgba(0,0,0,.28); }
 .panel p { margin: 0; font-size: clamp(16px, 3cqi, 26px); font-weight: 700; }
 .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
 .btn {

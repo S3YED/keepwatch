@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Keepwatch builder</title>
+  <style>
+    :root {
+      --bg: #f5f6f8; --panel: #ffffff; --line: #e3e6eb; --text: #14161a; --muted: #5f6672;
+      --accent: #2f6bff; --accent-soft: #e8efff; --danger: #c62828; --code: #0f1115; --code-text: #e6e8ec;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #0f1115; --panel: #171a20; --line: #2a2f38; --text: #eceef2; --muted: #9aa2af;
+        --accent: #6d95ff; --accent-soft: #1d2640; --danger: #ff8a80; --code: #0a0c10; --code-text: #e6e8ec;
+        color-scheme: dark;
+      }
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 10; }
+    header h1 { margin: 0; font-size: 16px; }
+    header p { margin: 0; color: var(--muted); font-size: 13px; }
+    header .spacer { flex: 1; }
+    main { display: grid; grid-template-columns: minmax(320px, 440px) 1fr; gap: 20px; padding: 20px; align-items: start; }
+    main > * { min-width: 0; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } .side { position: static; } }
+    .form { display: grid; gap: 12px; }
+    details { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+    summary { cursor: pointer; padding: 12px 14px; font-weight: 650; list-style: none; display: flex; justify-content: space-between; }
+    summary::after { content: "+"; color: var(--muted); }
+    details[open] summary::after { content: "–"; }
+    .fields { display: grid; gap: 12px; padding: 0 14px 14px; }
+    label.field { display: grid; gap: 4px; }
+    .name { font-weight: 600; font-size: 13px; }
+    .help { color: var(--muted); font-size: 12px; }
+    input[type="text"], input[type="url"], input[type="number"], input[type="datetime-local"], select, textarea {
+      width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit;
+    }
+    input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+    .check { display: flex; gap: 8px; align-items: flex-start; }
+    .check input { margin-top: 3px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chips label { display: inline-flex; gap: 6px; align-items: center; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; cursor: pointer; }
+    .color { display: flex; gap: 8px; align-items: center; }
+    .color input[type="color"] { width: 40px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: none; }
+    .issue { color: var(--danger); font-size: 12px; }
+    .side { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; position: sticky; top: 76px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+    .card h2 { margin: 0 0 10px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+    .card h2 .spacer { flex: 1; }
+    #stage { background: repeating-conic-gradient(var(--line) 0 25%, transparent 0 50%) 0 0 / 16px 16px; border-radius: 12px; padding: 12px; }
+    #stage keep-watch { max-width: 100%; margin: 0 auto; }
+    #stage.vertical keep-watch { max-width: 360px; }
+    .note { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+    .note.warn { color: var(--danger); }
+    button, .btn { font: inherit; font-weight: 600; font-size: 13px; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button:hover { border-color: var(--accent); }
+    .tabs { display: flex; gap: 4px; }
+    .tabs button[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); }
+    pre { margin: 10px 0 0; padding: 12px; border-radius: 10px; background: var(--code); color: var(--code-text); font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; overflow: auto; max-height: 360px; white-space: pre; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    #log { font: 12px/1.5 ui-monospace, Menlo, monospace; color: var(--muted); max-height: 120px; overflow: auto; margin: 8px 0 0; white-space: pre-wrap; }
+    dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); width: min(640px, 92vw); }
+    dialog textarea { min-height: 260px; font: 12px ui-monospace, Menlo, monospace; }
+  </style>
+  <!--KEEPWATCH-->
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Keepwatch builder</h1>
+      <p>Paste a video link, tune the player, copy the embed.</p>
+    </div>
+    <span class="spacer"></span>
+    <button type="button" id="import">Import config</button>
+    <button type="button" id="reset">Reset settings</button>
+  </header>
+  <main>
+    <form class="form" id="form" autocomplete="off"></form>
+    <div class="side">
+      <section class="card">
+        <h2>Preview <span class="spacer"></span><button type="button" id="replay" title="Forget this browser's progress so the muted preview shows again">Reset viewer</button></h2>
+        <div id="stage"></div>
+        <p class="note" id="stage-note"></p>
+        <div id="log" aria-live="polite"></div>
+      </section>
+      <section class="card">
+        <h2>
+          Output
+          <span class="spacer"></span>
+          <span class="tabs" role="tablist">
+            <button type="button" role="tab" data-tab="embed" aria-selected="true">Embed</button>
+            <button type="button" role="tab" data-tab="json" aria-selected="false">Config</button>
+            <button type="button" role="tab" data-tab="react" aria-selected="false">React</button>
+          </span>
+        </h2>
+        <div class="row" id="script-row">
+          <label class="field" style="flex:1">
+            <span class="name">Player script</span>
+            <select id="script-mode">
+              <option value="cdn">CDN (after npm publish)</option>
+              <option value="url">My own URL</option>
+              <option value="inline">Inline (self-contained, ~70 KB)</option>
+            </select>
+          </label>
+          <label class="field" style="flex:2" id="script-url-wrap" hidden>
+            <span class="name">Script URL</span>
+            <input type="url" id="script-url" placeholder="https://example.com/keepwatch.js" />
+          </label>
+        </div>
+        <pre id="output"></pre>
+        <div class="row" style="margin-top:10px">
+          <button type="button" class="primary" id="copy">Copy</button>
+          <button type="button" id="download-page">Download test page</button>
+          <button type="button" id="download-json">Download config</button>
+        </div>
+      </section>
+    </div>
+  </main>
+  <dialog id="import-dialog">
+    <form method="dialog" style="display:grid;gap:10px">
+      <strong>Paste a keepwatch.config.json</strong>
+      <textarea id="import-text" spellcheck="false"></textarea>
+      <div id="import-issues" class="issue"></div>
+      <div class="row"><button value="cancel">Cancel</button><button class="primary" id="import-apply" value="apply">Apply</button></div>
+    </form>
+  </dialog>
+  <!--APP-->
+</body>
+</html>

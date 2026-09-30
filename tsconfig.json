@@ -24,6 +24,8 @@
   },
   "include": [
     "src",
-    "build.ts"
+    "build.ts",
+    "builder",
+    "scripts"
   ]
 }

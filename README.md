@@ -12,6 +12,28 @@ A Vidalytics-style VSL player for Vimeo, YouTube, Loom and plain video files (MP
 - **Analytics:** one row per viewing session (views, plays with sound, unmute rate, drop-off curve, CTA reached and clicked, finishes), sent to a collector you choose. No cookies, no IP, no personal data.
 - English, Dutch and Russian built in; restyle with CSS custom properties.
 
+## Build the embed
+
+Three ways to the same embed code, all driven by one settings list (`src/config.ts`, reference in [SETTINGS.md](SETTINGS.md)):
+
+- **Builder:** `bun run builder` opens a local page: paste a link, tune every setting with a live preview, copy the embed (script URL or fully inline), the config JSON or a React snippet, or download a test page. `dist/builder.html` is one self-contained file; YouTube needs it served over http, which `bun run builder` does.
+- **Config file (for agents):** write a `keepwatch.config.json` (see `examples/clark-vsl.config.json`), then `bun run embed keepwatch.config.json` prints the embed. `--inline` puts the player inside the snippet, `--script <url>` points at your own copy, `--page out.html` writes a test page. A bad config prints every problem and exits 1.
+- **Code:** `import { validateConfig, embedCode } from "keepwatch/server"`, or pass the same keys as props to `<Keepwatch />` in React.
+
+What you can tune, following Vidalytics' own settings:
+
+| Area | Settings |
+|---|---|
+| Autoplay | start mode, restart on unmute, preview loop, unmute copy (and a phone version), full screen on unmute |
+| Controls | which buttons show, disable pausing, smart pause, default speed, speed menu |
+| Progress bar | rapid (fast early, slow late), honest or hidden, rapid strength (and a phone strength) |
+| Call to action | show at, hide at, text, link, new tab, exit CTA (on pause only), leave full screen for it, page gates |
+| Pause & end | pause image, end screen / end image / loop / count down and redirect |
+| Resume | ask, continue silently or always start over, and its copy |
+| Video | thumbnail, language, expiry date and message |
+| Look | accent, text on accent, progress colour, corner radius, aspect ratio |
+| Analytics | collector URL, placement, video id; `keepwatch:progress` events at 25/50/75/90% |
+
 ## Drop it on any page
 
 ```html
@@ -161,7 +183,7 @@ bun run build     # dist/keepwatch.js (CDN), dist/index.js, dist/server.js, dist
 bunx serve .      # then open /demo
 ```
 
-`src/core.ts` holds every rule as a pure, tested function; `src/sources.ts` recognises links; `src/providers/` holds one adapter per video host; `src/element.ts` is the player shell; `src/server.ts` is the collector contract. Change a rule in core, test it, then wire it. The demo has one player per provider.
+`src/config.ts` is the settings list: every setting's key, attribute, default and help, which the builder form, `bun run embed`, the React props and SETTINGS.md are made from. Add a setting there first, then read its attribute in `src/element.ts` (a test fails if a listed attribute is never read). `src/core.ts` holds every rule as a pure, tested function; `src/sources.ts` recognises links; `src/providers/` holds one adapter per video host; `src/element.ts` is the player shell; `src/server.ts` is the collector contract. Change a rule in core, test it, then wire it. The demo has one player per provider.
 
 Icons are [Lucide](https://lucide.dev) paths (ISC licence), inlined in `src/icons.ts`.
 

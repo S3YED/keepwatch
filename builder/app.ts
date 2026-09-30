@@ -5,7 +5,7 @@
  * built builder.html is one file that works offline.
  */
 import {
-  CDN_SCRIPT,
+  HOSTED_SCRIPT,
   FIELDS,
   GROUPS,
   configToAttributes,
@@ -194,7 +194,7 @@ for (const name of ["play", "unmute", "pause", "progress", "cta-shown", "cta-cli
 function script(): { src: string } | { inline: string } {
   if (scriptMode.value === "inline") return { inline: $("kw-src").textContent ?? "" };
   if (scriptMode.value === "url" && scriptUrl.value.trim()) return { src: scriptUrl.value.trim() };
-  return { src: CDN_SCRIPT };
+  return { src: HOSTED_SCRIPT };
 }
 
 /** React props are the config keys themselves (see src/react.tsx), typed as in the config. */

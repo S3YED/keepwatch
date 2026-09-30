@@ -169,14 +169,15 @@ export function scriptSafe(code: string): string {
   return code.replace(/<(?=!--|\/?script)/gi, "\\x3C");
 }
 
-export const CDN_SCRIPT = "https://cdn.jsdelivr.net/npm/keepwatch@0/dist/keepwatch.js";
+/** Where the player script is hosted: getclark.app serves the current release. */
+export const HOSTED_SCRIPT = "https://getclark.app/keepwatch.js";
 
 /**
  * The full embed: the script (a URL, or the player's own code inline so the
  * snippet needs nothing else), the element, and a gate example when the CTA
  * points at a section on the page.
  */
-export function embedCode(config: KeepwatchConfig, script: { src: string } | { inline: string } = { src: CDN_SCRIPT }): string {
+export function embedCode(config: KeepwatchConfig, script: { src: string } | { inline: string } = { src: HOSTED_SCRIPT }): string {
   const tag = "src" in script ? `<script src="${escapeAttr(script.src)}" defer></script>` : `<script>${scriptSafe(script.inline)}</script>`;
   const out = [tag, "", elementHtml(config)];
   const href = typeof config.ctaHref === "string" ? config.ctaHref : "";

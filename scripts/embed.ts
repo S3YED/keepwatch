@@ -6,7 +6,7 @@
  * config never becomes a broken embed.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { CDN_SCRIPT, embedCode, validateConfig } from "../src/config.ts";
+import { HOSTED_SCRIPT, embedCode, validateConfig } from "../src/config.ts";
 
 const args = process.argv.slice(2);
 const file = args.find((a) => !a.startsWith("--") && !["--script", "--page"].includes(args[args.indexOf(a) - 1] ?? ""));
@@ -34,7 +34,7 @@ if (issues.length) {
 
 const script = args.includes("--inline")
   ? { inline: readFileSync(new URL("../dist/keepwatch.js", import.meta.url), "utf8") }
-  : { src: flag("--script") ?? CDN_SCRIPT };
+  : { src: flag("--script") ?? HOSTED_SCRIPT };
 const code = embedCode(config, script);
 const out = flag("--page");
 if (out) {

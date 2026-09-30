@@ -6,33 +6,53 @@
   <title>Keepwatch demo</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 960px; margin: 32px auto; padding: 0 16px; color: #111; }
-    keep-watch { --kw-accent: #2f6bff; box-shadow: 0 20px 60px -20px rgba(0,0,0,.4); }
+    keep-watch { --kw-accent: #3b5bff; box-shadow: 0 20px 60px -20px rgba(0,0,0,.4); margin: 12px 0 40px; }
+    h2 { margin-top: 48px; }
     #book { margin-top: 32px; padding: 24px; border-radius: 16px; background: #eef3ff; }
-    #log { font: 12px ui-monospace, monospace; white-space: pre-wrap; background: #f5f5f5; padding: 12px; border-radius: 8px; max-height: 200px; overflow: auto; }
+    #log { font: 12px ui-monospace, monospace; white-space: pre-wrap; background: #f5f5f5; padding: 12px; border-radius: 8px; max-height: 240px; overflow: auto; }
   </style>
   <script src="../dist/keepwatch.js" defer></script>
 </head>
 <body>
   <h1>Keepwatch demo</h1>
-  <p>Muted autoplay, click for sound, fast bar, resume on reload, CTA at 0:08 (demo value).</p>
+  <p>Muted preview with the unmute card, click to restart with sound, controls, resume on reload, CTA at 0:08 (demo value). Each player keeps its own progress in localStorage.</p>
 
+  <h2>Vimeo</h2>
   <keep-watch
     src="https://vimeo.com/1226915932"
-    video="clark-vsl-demo"
+    video="demo-vimeo"
     cta-at="0:08"
     cta-href="#book"
+    preview-loop="10"
+    smart-pause
     label="Clark VSL"
   ></keep-watch>
 
+  <h2>YouTube</h2>
+  <keep-watch src="https://www.youtube.com/watch?v=aqz-KE-bpKQ" video="demo-youtube" autoplay="inview" cta-at="0:08" cta-href="#book" label="Big Buck Bunny"></keep-watch>
+
+  <h2>MP4 file</h2>
+  <keep-watch
+    src="https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4"
+    video="demo-mp4"
+    autoplay="inview"
+    cta-at="0:08"
+    cta-href="#book"
+    label="Big Buck Bunny (MP4)"
+  ></keep-watch>
+
+  <h2>HLS stream</h2>
+  <keep-watch src="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" video="demo-hls" autoplay="inview" label="Mux test stream"></keep-watch>
+
   <section id="book" data-keepwatch-gate>
     <h2>Book your call</h2>
-    <p>This section is hidden until the video reaches the CTA time.</p>
+    <p>This section is hidden until a video reaches the CTA time.</p>
   </section>
 
   <h3>Events</h3>
   <div id="log"></div>
   <script>
-    for (const name of ["ready", "play", "unmute", "pause", "cta-shown", "cta-click", "ended", "error"]) {
+    for (const name of ["ready", "play", "unmute", "pause", "progress", "cta-shown", "cta-click", "ended", "error"]) {
       document.addEventListener("keepwatch:" + name, (e) => {
         document.getElementById("log").textContent += `${new Date().toLocaleTimeString()} ${name} ${JSON.stringify(e.detail)}\n`;
       });

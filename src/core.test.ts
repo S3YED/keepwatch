@@ -4,35 +4,21 @@ import {
   ctaVisible,
   displayProgress,
   mergeBeat,
+  clock,
   mmss,
   parseBeat,
   parseTime,
-  parseVimeo,
   pickVariant,
   readUtm,
   resumeFrom,
   slug,
   summarise,
-  vimeoEmbedUrl,
   type Variant,
   type ViewMeasures,
 } from "./core.ts";
 
-const A: Variant = { id: "cut-a", vimeoId: "1", weight: 1 };
-const B: Variant = { id: "cut-b", vimeoId: "2", weight: 3 };
-
-test("vimeo links in every common shape", () => {
-  expect(parseVimeo("https://vimeo.com/1226915932")).toEqual({ vimeoId: "1226915932" });
-  expect(parseVimeo("vimeo.com/1226915932/ab12cd34ef")).toEqual({ vimeoId: "1226915932", hash: "ab12cd34ef" });
-  expect(parseVimeo("https://player.vimeo.com/video/1226915932?h=ab12cd&dnt=1")).toEqual({
-    vimeoId: "1226915932",
-    hash: "ab12cd",
-  });
-  expect(parseVimeo("https://vimeo.com/channels/staffpicks/123456")).toEqual({ vimeoId: "123456" });
-  expect(parseVimeo("1226915932")).toEqual({ vimeoId: "1226915932" });
-  expect(parseVimeo("https://youtube.com/watch?v=1234")).toBeNull();
-  expect(parseVimeo("not a link")).toBeNull();
-});
+const A: Variant = { id: "cut-a", source: { provider: "vimeo", id: "1" }, weight: 1 };
+const B: Variant = { id: "cut-b", source: { provider: "youtube", id: "dQw4w9WgXcQ" }, weight: 3 };
 
 test("times as people write them", () => {
   expect(parseTime("6:11")).toBe(371);
@@ -43,6 +29,9 @@ test("times as people write them", () => {
   expect(parseTime(null)).toBeNull();
   expect(mmss(371)).toBe("6:11");
   expect(mmss(3723)).toBe("1:02:03");
+  expect(clock(18)).toBe("00:18");
+  expect(clock(371)).toBe("06:11");
+  expect(clock(3723)).toBe("1:02:03");
 });
 
 test("the bar runs ahead early and still ends at the end", () => {
@@ -83,16 +72,6 @@ test("variants: stored wins, new viewers split by weight", () => {
   expect(pickVariant([A, B], null, 0.26)?.id).toBe("cut-b");
   expect(pickVariant([A, B], "gone", 1)?.id).toBe("cut-b");
   expect(pickVariant([], null, 0.5)).toBeNull();
-});
-
-test("the embed hides Vimeo's chrome, keeps dnt and the unlisted hash", () => {
-  const url = new URL(vimeoEmbedUrl({ vimeoId: "9", hash: "abc123" }, { muted: true, autoplay: true }));
-  expect(url.pathname).toBe("/video/9");
-  expect(url.searchParams.get("dnt")).toBe("1");
-  expect(url.searchParams.get("controls")).toBe("0");
-  expect(url.searchParams.get("muted")).toBe("1");
-  expect(url.searchParams.get("h")).toBe("abc123");
-  expect(new URL(vimeoEmbedUrl(A, { muted: false, autoplay: false })).searchParams.get("autoplay")).toBe("0");
 });
 
 test("slugs", () => {

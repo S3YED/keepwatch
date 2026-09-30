@@ -37,7 +37,7 @@ What you can tune, following Vidalytics' own settings:
 ## Drop it on any page
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/keepwatch@0/dist/keepwatch.js" defer></script>
+<script src="https://getclark.app/keepwatch.js" defer></script>
 
 <keep-watch
   src="https://vimeo.com/1226915932"
@@ -194,4 +194,4 @@ npm version patch
 npm publish
 ```
 
-jsDelivr serves `https://cdn.jsdelivr.net/npm/keepwatch@0/dist/keepwatch.js` within minutes of a publish. Pin a major (`@0`) on sites so a breaking release never lands unannounced.
+Sites load the player from `https://getclark.app/keepwatch.js`, which getclark.app copies from the Keepwatch version it vendors on every build: a release reaches every site when getclark.app moves to it. Once the package is on npm, jsDelivr also serves `https://cdn.jsdelivr.net/npm/keepwatch@0/dist/keepwatch.js`.

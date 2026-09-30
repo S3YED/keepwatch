@@ -36,7 +36,9 @@ let registering: Promise<unknown> | null = null;
 
 export function Keepwatch(props: KeepwatchProps) {
   useEffect(() => {
-    registering ??= import("./element.ts").then((m) => m.define());
+    // Through the package name, not "./element.ts": the built react.js must
+    // not carry the element, which extends HTMLElement and cannot load on a server.
+    registering ??= import("keepwatch").then((m) => m.define());
   }, []);
   const attrs: Record<string, string | undefined> = {
     src: props.src,

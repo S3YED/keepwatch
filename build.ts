@@ -16,18 +16,27 @@ const script = await Bun.build({
   minify: true,
   target: "browser",
 });
-const esm = await Bun.build({
-  entrypoints: ["src/index.ts", "src/server.ts", "src/react.tsx"],
-  outdir: "dist",
-  format: "esm",
-  target: "browser",
-  splitting: true,
-  external: ["@vimeo/player", "react"],
-});
-for (const r of [script, esm]) {
+/* One self-contained file per entry, no code splitting: Bun's split
+   output drops the "use client" directive and prepends a chunk preloader
+   that touches `document` at import, which breaks server rendering in
+   Next.js. The React entry loads the element through the package's own
+   name ("keepwatch"), so it stays external here and browser-only there. */
+const entry = (file: string, banner?: string) =>
+  Bun.build({
+    entrypoints: [file],
+    outdir: "dist",
+    format: "esm",
+    target: "browser",
+    external: ["@vimeo/player", "react", "keepwatch"],
+    banner,
+  });
+const esm = await entry("src/index.ts");
+const server = await entry("src/server.ts");
+const react = await entry("src/react.tsx", '"use client";');
+for (const r of [script, esm, server, react]) {
   if (!r.success) {
     for (const log of r.logs) console.error(log);
     process.exit(1);
   }
 }
-for (const o of [...script.outputs, ...esm.outputs]) console.log(o.path.replace(process.cwd() + "/", ""), `${(o.size / 1024).toFixed(1)} KB`);
+for (const o of [...script.outputs, ...esm.outputs, ...server.outputs, ...react.outputs]) console.log(o.path.replace(process.cwd() + "/", ""), `${(o.size / 1024).toFixed(1)} KB`);

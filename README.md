@@ -183,7 +183,11 @@ Every beat carries an anonymous `viewer` id (random, first-party localStorage, n
 <keep-watch-convert value="497" currency="EUR" order-id="order-1042"></keep-watch-convert>
 ```
 
-It goes to the same `collect` endpoint as the beats, with `kind: "conversion"`. A collector validates it with `parseConversion` and stores it once per `conversionKey` (the order id per site). Every field, type and trigger is in [docs/EVENTS.md](docs/EVENTS.md).
+It goes to the same `collect` endpoint as the beats, with `kind: "conversion"`. The order id is hashed (SHA-256) in the browser and never sent as is. A collector validates it with `parseConversion`, stores it once per `conversionKey` (the order hash per site) and caps it per viewer.
+
+A conversion is **reported by the browser and unverified**, like any pixel: anyone who can reach the collector can send one. Show it as such. Trustworthy revenue needs a server-to-server postback signed with a per-site secret, which is not built yet.
+
+Every field, type and trigger is in [docs/EVENTS.md](docs/EVENTS.md).
 
 The reference collector and dashboard live in getclark.app (`/api/vsl`, `/admin/vsl-analytics`). To report from a new site, add its hostname to the allowlist there.
 

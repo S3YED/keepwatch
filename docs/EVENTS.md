@@ -33,7 +33,7 @@ Fires: when the video first plays, every 30 seconds of listening, on sound on, C
 | `ctaClicked` | boolean | The CTA was clicked. |
 | `completed` | boolean | Reached the end. |
 | `mobile` | boolean | Coarse pointer (touch screen). |
-| `viewer` | string, `[A-Za-z0-9_-]{16,64}`, optional | Anonymous viewer id, below. New with conversion tracking; a malformed value is dropped and the beat still counts. |
+| `viewer` | string, `[0-9a-z]{32}`, optional | Anonymous viewer id, below: exactly the random format the player makes. New with conversion tracking; any other value is dropped and the beat still counts. |
 | `returning` | boolean, optional | The viewer had an earlier visit. Sent with `viewer`; absent when `viewer` is. |
 | `utmSource`, `utmMedium`, `utmCampaign`, `utmContent` | string, max 120, optional | From the page URL's `utm_*` parameters. |
 
@@ -41,22 +41,24 @@ A slug is lower case, `[a-z0-9][a-z0-9-]{0,39}`. A missing boolean reads as `fal
 
 ## Conversion
 
-A sale, sent from a thank-you page. Validated by `parseConversion`, capped at `CONVERSION_MAX_BYTES` (1024). Strict: a message with any malformed field is refused whole, since a wrong number in revenue is worse than a missing one. Store each one under `conversionKey(c)`, which is unique: `order:<site>:<orderId>` when there is an order id, otherwise `cid:<cid>`.
+A sale, sent from a thank-you page. Validated by `parseConversion`, capped at `CONVERSION_MAX_BYTES` (1024). Strict: a message with any malformed field is refused whole, since a wrong number in revenue is worse than a missing one. Store each one under `conversionKey(c)`, which is unique: `order:<site>:<orderHash>` when there is an order hash, otherwise `cid:<cid>`.
+
+**Unverified.** A conversion is reported by the browser, like any pixel. `Origin` keeps honest pages apart but is not authentication: anyone who can reach the collector can send a conversion, with any value, or send an order's hash first. A collector should store it marked as browser-reported (getclark.app stores `source: "browser"` and labels it "reported by the browser, unverified"), refuse values above `MAX_VALUE` (100000), and cap each viewer id at `MAX_CONVERSIONS_PER_VIEWER_PER_DAY` (5) per 24 hours. Revenue you can trust needs a server-to-server postback from the shop, signed with a per-site secret; that is a planned follow-up and needs the site owner to issue the secret.
 
 Fires: once per `keepwatch.convert()` call or `<keep-watch-convert>` element, unless this browser already sent the same conversion (below).
 
 | Field | Type | Notes |
 |---|---|---|
 | `kind` | `"conversion"` | Required. |
-| `cid` | string, `[A-Za-z0-9_-]{16,64}` | Random per send, so a retried send is stored once. Required. |
+| `cid` | string, `[0-9a-z]{32}` | Random per send, so a retried send is stored once. Required. |
 | `site` | string, hostname, max 120 | The thank-you page's hostname. Required. |
-| `viewer` | string, `[A-Za-z0-9_-]{16,64}` | The anonymous viewer id. Required. |
+| `viewer` | string, `[0-9a-z]{32}` | The anonymous viewer id. Required. |
 | `returning` | boolean | The viewer had an earlier visit. A missing value reads as `false`. |
 | `video` | slug, optional | The last video this browser started. Sent with `variant` or not at all. |
 | `variant` | slug, optional | The variant of that video. |
-| `value` | number, 0 to 10000000 | The sale in the currency's major unit (`497.5` is 497.50), rounded to cents. Must be a JSON number. Required. |
+| `value` | number, 0 to 100000 | The sale in the currency's major unit (`497.5` is 497.50), rounded to cents. Must be a JSON number. Required. |
 | `currency` | string, `[A-Z]{3}` | ISO 4217. Required. |
-| `orderId` | string, `[A-Za-z0-9._:#/-]{1,64}`, optional | The shop's order id. No `@` or spaces, so it cannot carry an email address. |
+| `orderHash` | string, `[0-9a-f]{64}`, optional | SHA-256 hex of `keepwatch:<site>:<order id>`, computed in the browser with SubtleCrypto, so the order id itself is never sent. Absent when no id was given or SubtleCrypto is unavailable (plain http, old browsers). A raw `orderId` field is refused. |
 
 ### Sending one
 
@@ -72,11 +74,12 @@ or, without a script of your own:
 <keep-watch-convert value="497" currency="EUR" order-id="order-1042"></keep-watch-convert>
 ```
 
-`keepwatch.convert({ value, currency, id?, collect? })` returns `true` when a message was sent and `false` when it was refused (invalid input or no endpoint, with a console warning) or already sent. In a bundle: `import { convert } from "keepwatch"`.
+`keepwatch.convert({ value, currency, id?, collect? })` returns a promise: `true` when the message was handed to the network, `false` when it was refused (invalid input or no endpoint, with a console warning), already sent, or the send failed. In a bundle: `import { convert } from "keepwatch"`.
 
 - `collect`: where to send it. Default: the `collect` of the last player this browser watched on this site.
 - `video` and `variant`: always the last video this browser started on this site (stored in localStorage when playback starts). With no such video, or no storage, the conversion is sent without them.
-- Dedupe in the browser: an `id` is sent once per browser for 30 days. Without an `id`, the same value and currency on the same page path is sent once for 30 days, so reloading the thank-you page does not count twice. With storage blocked, dedupe holds for the page view only; the collector's `conversionKey` still stores each order id once.
+- `id`: hashed before sending (above). Letters, digits and `. _ : # / -`, 1 to 64.
+- Dedupe in the browser, recorded only after the send succeeded (`sendBeacon` accepted it, or `fetch` went out without a network error), so a failed send is retried on reload. An order is sent once per browser for 30 days. Without an order hash, the same value and currency on the same page path is sent once within 30 minutes (`UNNAMED_TTL_MS`): a reload does not count twice, a second purchase the next day does count. With storage blocked, dedupe holds for the page view only; the collector's `conversionKey` still stores each order once.
 
 ## Viewer id and returning viewers
 

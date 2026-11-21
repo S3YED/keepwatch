@@ -138,7 +138,7 @@ test("viewer id and returning flag are optional, so older players still report",
   expect(b?.returning).toBe(true);
   expect(parseBeat({ ...beat, viewer })?.returning).toBe(false);
   // A malformed id is dropped, never stored; the view itself still counts.
-  for (const bad of ["short", "me@example.com", 42, "x".repeat(65)]) {
+  for (const bad of ["short", "me@example.com", 42, "x".repeat(65), "V".repeat(32), "+31612345678-abcdefghijklmnopq"]) {
     const r = parseBeat({ ...beat, viewer: bad, returning: true });
     expect(r?.sid).toBe(beat.sid);
     expect(r?.viewer).toBeUndefined();

@@ -1,16 +1,21 @@
 import { beforeEach, expect, test } from "bun:test";
-import { CONVERSION_MAX_BYTES, conversionKey, parseConversion } from "./core.ts";
+import { CONVERSION_MAX_BYTES, MAX_VALUE, conversionKey, parseConversion } from "./core.ts";
+import { createHash } from "node:crypto";
 import {
   CONVERTED_TTL_MS,
+  UNNAMED_TTL_MS,
   VISIT_GAP_MS,
-  firstSend,
   lastWatched,
   prepareConversion,
+  recordSent,
   rememberWatched,
   resetPageState,
+  sendConversion,
+  sha256Hex,
   visit,
   type ConvertContext,
   type KV,
+  type Transport,
 } from "./viewer.ts";
 
 function memory(): KV & { data: Map<string, string> } {
@@ -82,73 +87,115 @@ function ctx(store: KV | null, over: Partial<ConvertContext> = {}): ConvertConte
   return { store, viewer: { id: A, returning: true }, site: "getclark.app", path: "/thanks", now: 1_000, cid: B, ...over };
 }
 
-test("convert credits the viewer and the last watched video and variant", () => {
+const hex = (s: string) => createHash("sha256").update(s).digest("hex");
+const ok: Transport = async () => true;
+const COLLECT = "https://x.test/api/vsl";
+
+test("convert credits the viewer and the last watched video, and sends only a hash of the order id", async () => {
   const store = memory();
   rememberWatched(store, { video: "clark-vsl", variant: "cut-b", collect: "https://getclark.app/api/vsl", at: 0 });
-  const r = prepareConversion({ value: "497.5", currency: "eur", id: "order-1042" }, ctx(store));
-  expect(r).toEqual({
-    ok: true,
-    endpoint: "https://getclark.app/api/vsl",
-    body: {
-      kind: "conversion",
-      cid: B,
-      site: "getclark.app",
-      viewer: A,
-      returning: true,
-      video: "clark-vsl",
-      variant: "cut-b",
-      value: 497.5,
-      currency: "EUR",
-      orderId: "order-1042",
-    },
+  const sent: string[] = [];
+  const r = await sendConversion({ value: "497.5", currency: "eur", id: "order-1042" }, ctx(store), async (_e, json) => {
+    sent.push(json);
+    return true;
   });
+  const orderHash = hex("keepwatch:getclark.app:order-1042");
+  expect(r.ok && r.body).toEqual({
+    kind: "conversion",
+    cid: B,
+    site: "getclark.app",
+    viewer: A,
+    returning: true,
+    video: "clark-vsl",
+    variant: "cut-b",
+    value: 497.5,
+    currency: "EUR",
+    orderHash,
+  });
+  expect(sent.length).toBe(1);
+  expect(sent[0]).not.toContain("order-1042");
   // What the browser sends is what a collector accepts, within its size cap.
+  expect(parseConversion(JSON.parse(sent[0]))).toEqual(JSON.parse(sent[0]));
+  expect(sent[0].length).toBeLessThan(CONVERSION_MAX_BYTES);
+});
+
+test("without SubtleCrypto the order id is left out, never sent in the clear", async () => {
+  expect(await sha256Hex("x", null)).toBeNull();
+  const broken = { digest: async () => Promise.reject(new Error("no")) } as unknown as SubtleCrypto;
+  expect(await sha256Hex("x", broken)).toBeNull();
+  const store = memory();
+  const r = await prepareConversion({ value: 10, currency: "EUR", id: "1042", collect: COLLECT }, ctx(store, { subtle: null }));
+  expect(r.ok).toBe(true);
   if (r.ok) {
-    expect(parseConversion(JSON.parse(JSON.stringify(r.body)))).toEqual(r.body);
-    expect(JSON.stringify(r.body).length).toBeLessThan(CONVERSION_MAX_BYTES);
+    expect(r.body.orderHash).toBeUndefined();
+    expect(JSON.stringify(r.body)).not.toContain("1042");
+    expect(r.key).toBe("page:/thanks|10|EUR");
   }
 });
 
-test("convert dedupes on the order id across page loads", () => {
+test("convert dedupes on the order across page loads, for 30 days", async () => {
   const store = memory();
-  const input = { value: 497, currency: "EUR", id: "1042", collect: "https://x.test/api/vsl" };
-  expect(prepareConversion(input, ctx(store)).ok).toBe(true);
+  const input = { value: 497, currency: "EUR", id: "1042", collect: COLLECT };
+  expect((await sendConversion(input, ctx(store), ok)).ok).toBe(true);
   resetPageState(); // a reload: only storage remembers
-  expect(prepareConversion(input, ctx(store, { path: "/other" }))).toEqual({ ok: false, reason: "already sent" });
-  expect(prepareConversion({ ...input, id: "1043" }, ctx(store)).ok).toBe(true);
+  expect(await sendConversion(input, ctx(store, { path: "/other", now: 1_000 + 29 * 86_400_000 }), ok)).toEqual({
+    ok: false,
+    reason: "already sent",
+  });
+  expect((await sendConversion({ ...input, id: "1043" }, ctx(store), ok)).ok).toBe(true);
+  resetPageState();
+  expect((await sendConversion(input, ctx(store, { now: 1_000 + CONVERTED_TTL_MS }), ok)).ok).toBe(true);
 });
 
-test("without an order id, the same sale on the same page counts once until the record expires", () => {
+test("without an order id, a reload counts once, and the same purchase the next day counts again", async () => {
   const store = memory();
-  const input = { value: 97, currency: "USD", collect: "https://x.test/api/vsl" };
-  expect(prepareConversion(input, ctx(store)).ok).toBe(true);
+  const input = { value: 97, currency: "USD", collect: COLLECT };
+  expect((await sendConversion(input, ctx(store), ok)).ok).toBe(true);
   resetPageState();
-  expect(prepareConversion(input, ctx(store)).ok).toBe(false);
-  expect(prepareConversion({ ...input, value: 98 }, ctx(store)).ok).toBe(true);
+  expect((await sendConversion(input, ctx(store, { now: 1_000 + UNNAMED_TTL_MS - 1 }), ok)).ok).toBe(false);
+  expect((await sendConversion({ ...input, value: 98 }, ctx(store), ok)).ok).toBe(true);
   resetPageState();
-  expect(prepareConversion(input, ctx(store, { now: 1_000 + CONVERTED_TTL_MS })).ok).toBe(true);
+  const nextDay = 1_000 + 24 * 60 * 60 * 1000;
+  const again = await sendConversion(input, ctx(store, { now: nextDay }), ok);
+  expect(again.ok && again.sent).toBe(true);
 });
 
-test("missing storage: convert still sends, unattributed, and dedupes within the page", () => {
+test("a failed send is not remembered, so a reload retries it", async () => {
+  const store = memory();
+  const input = { value: 497, currency: "EUR", id: "1042", collect: COLLECT };
+  const down: Transport = async () => false;
+  const first = await sendConversion(input, ctx(store), down);
+  expect(first.ok && first.sent).toBe(false);
+  expect(store.data.has("keepwatch:converted")).toBe(false);
+  const retry = await sendConversion(input, ctx(store), ok);
+  expect(retry.ok && retry.sent).toBe(true);
+  expect((await sendConversion(input, ctx(store), ok)).ok).toBe(false);
+});
+
+test("missing storage: convert still sends, unattributed, and dedupes within the page", async () => {
   for (const store of [blocked, null]) {
     resetPageState();
-    const input = { value: 10, currency: "EUR", id: "o-1", collect: "https://x.test/api/vsl" };
-    const r = prepareConversion(input, ctx(store));
-    expect(r.ok).toBe(true);
+    const input = { value: 10, currency: "EUR", id: "o-1", collect: COLLECT };
+    const r = await sendConversion(input, ctx(store), ok);
+    expect(r.ok && r.sent).toBe(true);
     if (r.ok) expect(r.body.video).toBeUndefined();
-    expect(prepareConversion(input, ctx(store))).toEqual({ ok: false, reason: "already sent" });
+    expect(await sendConversion(input, ctx(store), ok)).toEqual({ ok: false, reason: "already sent" });
   }
 });
 
-test("convert refuses bad input and a missing endpoint, and records nothing for them", () => {
+test("convert refuses bad input and a missing endpoint, and records nothing for them", async () => {
   const store = memory();
   const c = ctx(store);
-  expect(prepareConversion({ value: -1, currency: "EUR", collect: "x" }, c).ok).toBe(false);
-  expect(prepareConversion({ value: "lots", currency: "EUR", collect: "x" }, c).ok).toBe(false);
-  expect(prepareConversion({ value: 1e9, currency: "EUR", collect: "x" }, c).ok).toBe(false);
-  expect(prepareConversion({ value: 1, currency: "euro", collect: "x" }, c).ok).toBe(false);
-  expect(prepareConversion({ value: 1, currency: "EUR", id: "me@example.com", collect: "x" }, c).ok).toBe(false);
-  expect(prepareConversion({ value: 1, currency: "EUR" }, c)).toEqual({
+  for (const input of [
+    { value: -1, currency: "EUR", collect: COLLECT },
+    { value: "lots", currency: "EUR", collect: COLLECT },
+    { value: MAX_VALUE + 0.01, currency: "EUR", collect: COLLECT },
+    { value: 1, currency: "euro", collect: COLLECT },
+    { value: 1, currency: "EUR", id: "me@example.com", collect: COLLECT },
+  ]) {
+    expect((await sendConversion(input, c, ok)).ok).toBe(false);
+  }
+  expect(await sendConversion({ value: 1, currency: "EUR" }, c, ok)).toEqual({
     ok: false,
     reason: "no collect endpoint: pass { collect } or watch a player with collect first",
   });
@@ -157,34 +204,46 @@ test("convert refuses bad input and a missing endpoint, and records nothing for 
 
 test("the dedupe record is capped and drops expired entries", () => {
   const store = memory();
-  for (let i = 0; i < 80; i++) firstSend(store, `k${i}`, i);
+  for (let i = 0; i < 80; i++) recordSent(store, `order:k${i}`, i);
   const list = JSON.parse(store.data.get("keepwatch:converted")!);
   expect(list.length).toBe(50);
-  expect(list[0].k).toBe("k30");
-  firstSend(store, "late", CONVERTED_TTL_MS + 100);
-  expect(JSON.parse(store.data.get("keepwatch:converted")!).map((e: { k: string }) => e.k)).toEqual(["late"]);
+  expect(list[0].k).toBe("order:k30");
+  recordSent(store, "order:late", CONVERTED_TTL_MS + 100);
+  expect(JSON.parse(store.data.get("keepwatch:converted")!).map((e: { k: string }) => e.k)).toEqual(["order:late"]);
 });
 
 test("parseConversion is strict: a sale with a bad field is refused whole", () => {
-  const ok = { kind: "conversion" as const, cid: B, site: "getclark.app", viewer: A, value: 497, currency: "EUR" };
-  expect(parseConversion(ok)).toEqual({ ...ok, returning: false });
-  expect(parseConversion({ ...ok, kind: undefined })).toBeNull();
-  expect(parseConversion({ ...ok, value: "497" })).toBeNull();
-  expect(parseConversion({ ...ok, value: Number.NaN })).toBeNull();
-  expect(parseConversion({ ...ok, value: -5 })).toBeNull();
-  expect(parseConversion({ ...ok, currency: "EU" })).toBeNull();
-  expect(parseConversion({ ...ok, viewer: "short" })).toBeNull();
-  expect(parseConversion({ ...ok, video: "clark-vsl" })).toBeNull(); // video without variant
-  expect(parseConversion({ ...ok, orderId: "a b" })).toBeNull();
-  expect(parseConversion({ ...ok, returning: "yes" })).toBeNull();
-  expect(parseConversion({ ...ok, value: 9.999 })?.value).toBe(10);
-  expect(parseConversion({ ...ok, orderId: 1042 })?.orderId).toBe("1042");
-  expect(parseConversion({ ...ok, extra: "dropped" })).not.toHaveProperty("extra");
-  expect(parseConversion([ok])).toBeNull();
+  const good = { kind: "conversion" as const, cid: B, site: "getclark.app", viewer: A, value: 497, currency: "EUR" };
+  const h = hex("x");
+  expect(parseConversion(good)).toEqual({ ...good, returning: false });
+  expect(parseConversion({ ...good, orderHash: h })?.orderHash).toBe(h);
+  for (const bad of [
+    { ...good, kind: undefined },
+    { ...good, value: "497" },
+    { ...good, value: Number.NaN },
+    { ...good, value: -5 },
+    { ...good, value: MAX_VALUE + 1 },
+    { ...good, currency: "EU" },
+    { ...good, viewer: "short" },
+    { ...good, viewer: "A".repeat(32) }, // not the random format: upper case
+    { ...good, viewer: "a".repeat(33) },
+    { ...good, cid: "abc_defghijklmnopqrstuvwxyz012345" },
+    { ...good, video: "clark-vsl" }, // video without variant
+    { ...good, orderHash: h.toUpperCase() },
+    { ...good, orderHash: h.slice(1) },
+    { ...good, orderId: "1042" }, // a raw order id is never accepted
+    { ...good, returning: "yes" },
+    [good],
+  ]) {
+    expect(parseConversion(bad)).toBeNull();
+  }
+  expect(parseConversion({ ...good, value: 9.999 })?.value).toBe(10);
+  expect(parseConversion({ ...good, extra: "dropped" })).not.toHaveProperty("extra");
 });
 
 test("a conversion is stored once per order and site, or once per send without one", () => {
-  expect(conversionKey({ site: "a.test", cid: B, orderId: "1042" })).toBe("order:a.test:1042");
-  expect(conversionKey({ site: "b.test", cid: B, orderId: "1042" })).toBe("order:b.test:1042");
+  const h = hex("x");
+  expect(conversionKey({ site: "a.test", cid: B, orderHash: h })).toBe(`order:a.test:${h}`);
+  expect(conversionKey({ site: "b.test", cid: B, orderHash: h })).toBe(`order:b.test:${h}`);
   expect(conversionKey({ site: "a.test", cid: B })).toBe(`cid:${B}`);
 });

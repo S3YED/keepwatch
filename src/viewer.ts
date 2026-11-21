@@ -1,4 +1,4 @@
-import { currencyCode, money, orderId, slug, type Conversion } from "./core.ts";
+import { RANDOM_ID, currencyCode, money, orderId, slug, type Conversion } from "./core.ts";
 
 /**
  * Who is watching, without knowing who: an anonymous viewer id, a
@@ -18,12 +18,16 @@ export type KV = Pick<Storage, "getItem" | "setItem">;
 const VIEWER_KEY = "keepwatch:viewer";
 const LAST_KEY = "keepwatch:last";
 const CONVERTED_KEY = "keepwatch:converted";
-const ID = /^[A-Za-z0-9_-]{16,64}$/;
 
 /** Page views closer together than this are one visit. A later one makes the viewer returning. */
 export const VISIT_GAP_MS = 30 * 60 * 1000;
-/** How long a sent conversion is remembered, to drop a repeat (a reloaded thank-you page). */
+/** How long a sent order is remembered, to drop a repeat (a reloaded thank-you page). */
 export const CONVERTED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Without an order id, the same sale on the same page counts once within this
+ * window only (a reload), so a second purchase the next day still counts.
+ */
+export const UNNAMED_TTL_MS = 30 * 60 * 1000;
 const CONVERTED_MAX = 50;
 
 /** localStorage, or null when the browser refuses it. Reading the property can itself throw. */
@@ -71,7 +75,7 @@ export type Viewer = { id: string; returning: boolean };
  */
 export function visit(store: KV | null, now: number, newId: () => string = randomId): Viewer {
   const saved = read(store, VIEWER_KEY) as Record<string, unknown> | null;
-  const id = typeof saved?.id === "string" && ID.test(saved.id) ? saved.id : null;
+  const id = typeof saved?.id === "string" && RANDOM_ID.test(saved.id) ? saved.id : null;
   if (!id) {
     const fresh = newId();
     write(store, VIEWER_KEY, { id: fresh, visits: 1, last: now });
@@ -115,11 +119,14 @@ export function lastWatched(store: KV | null): LastWatched | null {
 
 /** What a thank-you page passes to `keepwatch.convert()`. */
 export type ConvertInput = {
-  /** The sale amount in the currency's major unit: 497 or 497.5. */
+  /** The sale amount in the currency's major unit: 497 or 497.5. At most 100000. */
   value: number | string;
   /** ISO 4217: "EUR", "usd". */
   currency: string;
-  /** Your order id. Strongly advised: it is what makes a conversion count once. */
+  /**
+   * Your order id. Hashed in the browser before it is sent, so it never
+   * leaves the page; strongly advised, as it is what makes an order count once.
+   */
   id?: string | number;
   /** The collector. Default: the `collect` of the last player this browser watched. */
   collect?: string;
@@ -127,22 +134,29 @@ export type ConvertInput = {
 
 type Sent = { k: string; at: number };
 
-/** Conversions sent from this page without storage, so a double call still counts once. */
+/** Conversions sent from this page, so a double call counts once even without storage. */
 const sentHere = new Set<string>();
 
-/** Has this conversion been sent from this browser already? Records it when not. */
-export function firstSend(store: KV | null, key: string, now: number): boolean {
-  if (sentHere.has(key)) return false;
+const ttlOf = (key: string) => (key.startsWith("order:") ? CONVERTED_TTL_MS : UNNAMED_TTL_MS);
+
+function sentList(store: KV | null, now: number): Sent[] {
   const saved = read(store, CONVERTED_KEY);
-  const list: Sent[] = Array.isArray(saved)
+  return Array.isArray(saved)
     ? (saved as Partial<Sent>[]).filter(
-        (e): e is Sent => !!e && typeof e.k === "string" && typeof e.at === "number" && now - e.at < CONVERTED_TTL_MS,
+        (e): e is Sent => !!e && typeof e.k === "string" && typeof e.at === "number" && now - e.at < ttlOf(e.k),
       )
     : [];
-  if (list.some((e) => e.k === key)) return false;
+}
+
+/** Was this conversion already delivered from this browser, within its window? */
+export function alreadySent(store: KV | null, key: string, now: number): boolean {
+  return sentHere.has(key) || sentList(store, now).some((e) => e.k === key);
+}
+
+/** Remember a delivered conversion. Only called once the transport accepted it. */
+export function recordSent(store: KV | null, key: string, now: number): void {
   sentHere.add(key);
-  write(store, CONVERTED_KEY, [...list, { k: key, at: now }].slice(-CONVERTED_MAX));
-  return true;
+  write(store, CONVERTED_KEY, [...sentList(store, now).filter((e) => e.k !== key), { k: key, at: now }].slice(-CONVERTED_MAX));
 }
 
 /** For tests: forget the in-page memory of sent conversions and of this page's viewer. */
@@ -151,6 +165,37 @@ export function resetPageState(): void {
   current = null;
 }
 
+/** SHA-256 hex, or null where SubtleCrypto is missing (plain http, old browsers) or fails. */
+export async function sha256Hex(text: string, subtle: SubtleCrypto | null): Promise<string | null> {
+  if (!subtle) return null;
+  try {
+    const digest = await subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return null;
+  }
+}
+
+/** Hand a message to the network. True when the browser accepted it for delivery. */
+export type Transport = (endpoint: string, json: string) => Promise<boolean>;
+
+/**
+ * sendBeacon first: a thank-you page is often left at once, and a beacon
+ * survives that. Otherwise fetch with no-cors, whose response is opaque,
+ * so "accepted" means the request went out without a network error.
+ */
+export const browserTransport: Transport = async (endpoint, json) => {
+  try {
+    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+      if (navigator.sendBeacon(endpoint, new Blob([json], { type: "text/plain" }))) return true;
+    }
+    await fetch(endpoint, { method: "POST", mode: "no-cors", keepalive: true, headers: { "content-type": "text/plain" }, body: json });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export type ConvertContext = {
   store: KV | null;
   viewer: Viewer;
@@ -158,33 +203,35 @@ export type ConvertContext = {
   path: string;
   now: number;
   cid: string;
+  /** Injected for tests; defaults to the browser's SubtleCrypto. */
+  subtle?: SubtleCrypto | null;
 };
 
+export type Prepared = { ok: true; body: Conversion; endpoint: string; key: string } | { ok: false; reason: string };
+
 /**
- * Build the conversion message, or say why not. Pure apart from the
- * dedupe record in `store`, so the rules are tested without a browser.
- * Without an order id, the same value and currency on the same page path
- * within CONVERTED_TTL_MS counts once (a reload of the thank-you page).
+ * Build the conversion message, or say why not. Records nothing: the caller
+ * records the dedupe key with `recordSent` only after the send succeeded.
+ * The order id is hashed (`keepwatch:<site>:<id>`); without SubtleCrypto it
+ * is left out, and the sale dedupes like one without an order id.
  */
-export function prepareConversion(
-  input: ConvertInput,
-  ctx: ConvertContext,
-): { ok: true; body: Conversion; endpoint: string } | { ok: false; reason: string } {
+export async function prepareConversion(input: ConvertInput, ctx: ConvertContext): Promise<Prepared> {
   const value = money(input?.value);
   const currency = currencyCode(input?.currency);
-  if (value === null) return { ok: false, reason: "value must be a number from 0 to 10000000" };
+  if (value === null) return { ok: false, reason: "value must be a number from 0 to 100000" };
   if (currency === null) return { ok: false, reason: "currency must be a three-letter ISO 4217 code" };
-  let order: string | undefined;
+  let orderHash: string | null = null;
   if (input.id !== undefined && input.id !== "") {
     const o = orderId(input.id);
     if (o === null) return { ok: false, reason: "id must be 1-64 letters, digits or . _ : # / -" };
-    order = o;
+    const subtle = ctx.subtle === undefined ? (globalThis.crypto?.subtle ?? null) : ctx.subtle;
+    orderHash = await sha256Hex(`keepwatch:${ctx.site}:${o}`, subtle);
   }
   const last = lastWatched(ctx.store);
   const endpoint = input.collect || last?.collect;
   if (!endpoint) return { ok: false, reason: "no collect endpoint: pass { collect } or watch a player with collect first" };
-  const key = order ? `id:${order}` : `page:${ctx.path}|${value}|${currency}`;
-  if (!firstSend(ctx.store, key, ctx.now)) return { ok: false, reason: "already sent" };
+  const key = orderHash ? `order:${orderHash}` : `page:${ctx.path}|${value}|${currency}`;
+  if (alreadySent(ctx.store, key, ctx.now)) return { ok: false, reason: "already sent" };
   const body: Conversion = {
     kind: "conversion",
     cid: ctx.cid,
@@ -194,9 +241,18 @@ export function prepareConversion(
     ...(last ? { video: last.video, variant: last.variant } : {}),
     value,
     currency,
-    ...(order ? { orderId: order } : {}),
+    ...(orderHash ? { orderHash } : {}),
   };
-  return { ok: true, body, endpoint };
+  return { ok: true, body, endpoint, key };
+}
+
+/** Prepare, send, and record only what was sent. The testable core of `convert`. */
+export async function sendConversion(input: ConvertInput, ctx: ConvertContext, transport: Transport): Promise<Prepared & { sent?: boolean }> {
+  const result = await prepareConversion(input, ctx);
+  if (!result.ok) return result;
+  const sent = await transport(result.endpoint, JSON.stringify(result.body));
+  if (sent) recordSent(ctx.store, result.key, ctx.now);
+  return { ...result, sent };
 }
 
 /**
@@ -206,40 +262,33 @@ export function prepareConversion(
  *   <script>keepwatch.convert({ value: 497, currency: "EUR", id: "order-1042" })</script>
  *
  * Credits the sale to this browser's viewer id and the last video and
- * variant it watched. Returns true when a message was sent, false when it
- * was invalid, had nowhere to go, or was already sent (see console for why).
+ * variant it watched. Resolves true when the message was handed to the
+ * network, false when it was invalid, had nowhere to go, was already sent,
+ * or the send failed (a failed send is not remembered, so a reload retries).
  * Also dispatches `keepwatch:conversion` on window, for pixels.
+ *
+ * The collector cannot verify it: it is a browser report, like any pixel.
  */
-export function convert(input: ConvertInput): boolean {
+export async function convert(input: ConvertInput): Promise<boolean> {
   if (typeof window === "undefined") return false;
-  const result = prepareConversion(input, {
-    store: browserStore(),
-    viewer: viewer(),
-    site: location.hostname.toLowerCase(),
-    path: location.pathname,
-    now: Date.now(),
-    cid: randomId(),
-  });
+  const result = await sendConversion(
+    input,
+    {
+      store: browserStore(),
+      viewer: viewer(),
+      site: location.hostname.toLowerCase(),
+      path: location.pathname,
+      now: Date.now(),
+      cid: randomId(),
+    },
+    browserTransport,
+  );
   if (!result.ok) {
     if (result.reason !== "already sent") console.warn(`[keepwatch] convert: ${result.reason}`);
     return false;
   }
-  const json = JSON.stringify(result.body);
-  window.dispatchEvent(new CustomEvent("keepwatch:conversion", { detail: result.body }));
-  // A thank-you page is often left at once: a beacon survives that, a fetch may not.
-  if (typeof navigator.sendBeacon === "function" && navigator.sendBeacon(result.endpoint, new Blob([json], { type: "text/plain" }))) {
-    return true;
-  }
-  fetch(result.endpoint, {
-    method: "POST",
-    mode: "no-cors",
-    keepalive: true,
-    headers: { "content-type": "text/plain" },
-    body: json,
-  }).catch(() => {
-    // Best effort, like every report.
-  });
-  return true;
+  if (result.sent) window.dispatchEvent(new CustomEvent("keepwatch:conversion", { detail: result.body }));
+  return result.sent === true;
 }
 
 /**
@@ -258,7 +307,7 @@ export function defineConvert(tag = "keep-watch-convert"): void {
     class extends HTMLElement {
       connectedCallback() {
         this.hidden = true;
-        convert({
+        void convert({
           value: this.getAttribute("value") ?? "",
           currency: this.getAttribute("currency") ?? "",
           id: this.getAttribute("order-id") ?? undefined,

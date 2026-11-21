@@ -20,3 +20,7 @@ export { registerProvider, type MediaEvents, type MediaHandle, type MountOptions
 export * from "./sources.ts";
 export * from "./core.ts";
 export { convert, defineConvert, viewer, type ConvertInput, type Viewer } from "./viewer.ts";
+export * from "./bar.ts";
+export * from "./chapters.ts";
+export * from "./vtt.ts";
+export * from "./mini.ts";

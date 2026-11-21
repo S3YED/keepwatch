@@ -53,6 +53,47 @@ test("validation reports every problem and keeps the good settings", () => {
   expect(validateConfig({ src: "https://example.com/page" }).issues[0].key).toBe("src");
 });
 
+test("chapters, captions, seek and the mini player in a config", () => {
+  const { attrs } = configToAttributes({
+    src: "/video/vsl.mp4",
+    bar: "linear",
+    seek: false,
+    chapters: "0:00 Intro|1:20 Demo",
+    captions: "en=/c/en.vtt nl=/c/nl.vtt",
+    captionsLang: "nl",
+    captionsOn: true,
+    mini: "bottom-left",
+    miniWidth: 320,
+    miniWhen: "playing",
+    miniClose: false,
+  });
+  expect(attrs).toEqual([
+    ["src", "/video/vsl.mp4"],
+    ["bar", "linear"],
+    ["seek", "false"],
+    ["chapters", "0:00 Intro|1:20 Demo"],
+    ["captions", "en=/c/en.vtt nl=/c/nl.vtt"],
+    ["captions-lang", "nl"],
+    ["captions-on", ""],
+    ["mini", "bottom-left"],
+    ["mini-close", "false"],
+  ]);
+  // A config that sets none of them adds no attribute.
+  expect(configToAttributes({ src: "/video/vsl.mp4", seek: true, mini: "", miniClose: true, captionsOn: false }).attrs).toEqual([["src", "/video/vsl.mp4"]]);
+
+  const { config, issues } = validateConfig({
+    src: "/video/vsl.mp4",
+    chapters: "nonsense",
+    captions: "javascript:alert(1)",
+    mini: "middle",
+    miniWhen: "always",
+    seek: "no",
+  });
+  expect(config).toEqual({ src: "/video/vsl.mp4", miniWhen: "always" });
+  expect(issues.map((i) => i.key).sort()).toEqual(["captions", "chapters", "mini", "seek"]);
+  expect(validateConfig({ src: "/v.mp4", chapters: "/c/chapters.vtt", captions: "/c/en.vtt", controls: "play captions chapters" }).issues).toEqual([]);
+});
+
 test("every setting is documented and every attribute is read by the player", () => {
   const element = readFileSync(new URL("./element.ts", import.meta.url), "utf8");
   const docs = settingsMarkdown();

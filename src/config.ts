@@ -8,18 +8,22 @@
  * one and `bun run embed` turns it into the embed code.
  */
 
+import { chaptersInput } from "./chapters.ts";
 import { parseTime } from "./core.ts";
 import { parseSource } from "./sources.ts";
+import { parseCaptionTracks } from "./vtt.ts";
 
 export type FieldType = "text" | "url" | "time" | "number" | "boolean" | "select" | "color" | "datetime" | "list";
 
-export type Group = "Video" | "Autoplay" | "Controls" | "Progress bar" | "Call to action" | "Pause & end" | "Resume" | "Look" | "Analytics";
+export type Group = "Video" | "Autoplay" | "Controls" | "Progress bar" | "Chapters & captions" | "Mini player" | "Call to action" | "Pause & end" | "Resume" | "Look" | "Analytics";
 
 export const GROUPS: readonly Group[] = [
   "Video",
   "Autoplay",
   "Controls",
   "Progress bar",
+  "Chapters & captions",
+  "Mini player",
   "Call to action",
   "Pause & end",
   "Resume",
@@ -64,16 +68,29 @@ export const FIELDS = [
   f({ key: "fullscreenOnUnmute", attr: "fullscreen-on-unmute", group: "Autoplay", label: "Full screen on unmute", type: "select", default: "", options: [{ value: "", label: "Never" }, { value: "mobile", label: "Phones" }, { value: "desktop", label: "Desktop" }, { value: "always", label: "Always" }], help: "Go full screen when the viewer turns the sound on." }),
 
   // Controls
-  f({ key: "controls", attr: "controls", group: "Controls", label: "Buttons", type: "list", default: "play rewind sound time speed fullscreen", options: [{ value: "play", label: "Play/pause" }, { value: "rewind", label: "Back 10s" }, { value: "sound", label: "Sound" }, { value: "time", label: "Time" }, { value: "speed", label: "Speed" }, { value: "fullscreen", label: "Full screen" }], help: "Which buttons the control bar shows." }),
+  f({ key: "controls", attr: "controls", group: "Controls", label: "Buttons", type: "list", default: "play rewind sound time speed captions chapters fullscreen", options: [{ value: "play", label: "Play/pause" }, { value: "rewind", label: "Back 10s" }, { value: "sound", label: "Sound" }, { value: "time", label: "Time" }, { value: "speed", label: "Speed" }, { value: "captions", label: "Captions" }, { value: "chapters", label: "Chapters" }, { value: "fullscreen", label: "Full screen" }], help: "Which buttons the control bar shows. Captions and chapters only show when the video has them." }),
   f({ key: "noPause", attr: "no-pause", group: "Controls", label: "Disable pausing", type: "boolean", default: false, help: "No pause button and no click-to-pause. Keeps viewers in the pitch; use with care." }),
   f({ key: "smartPause", attr: "smart-pause", group: "Controls", label: "Pause when hidden", type: "boolean", default: false, help: "Pause while the tab is hidden, play on when it comes back." }),
   f({ key: "speed", attr: "speed", group: "Controls", label: "Default speed", type: "number", default: 1, help: "Playback speed at the start, e.g. 1.1. Vimeo needs a plan that allows speed." }),
   f({ key: "speeds", attr: "speeds", group: "Controls", label: "Speed menu", type: "text", default: "0.75 1 1.25 1.5 2", help: "Speeds offered in the menu, space-separated. Empty hides the menu." }),
 
   // Progress bar
-  f({ key: "bar", attr: "bar", group: "Progress bar", label: "Style", type: "select", default: "rapid", options: [{ value: "rapid", label: "Rapid: fast early, slow late" }, { value: "linear", label: "Honest" }, { value: "none", label: "Hidden" }], help: "Rapid makes a long video feel short and still ends exactly at the end. Never seekable." }),
+  f({ key: "bar", attr: "bar", group: "Progress bar", label: "Style", type: "select", default: "rapid", options: [{ value: "rapid", label: "Rapid: fast early, slow late" }, { value: "linear", label: "Honest, seekable" }, { value: "none", label: "Hidden" }], help: "Rapid makes a long video feel short and still ends exactly at the end; it is never seekable. Linear shows the real position and lets the viewer seek (see `seek`)." }),
+  f({ key: "seek", attr: "seek", group: "Progress bar", label: "Seek on the linear bar", type: "boolean", default: true, help: "With `bar=\"linear\"` the viewer can drag, tap or use the arrow keys to move through the video. Off keeps the linear bar a display. The rapid bar never seeks." }),
   f({ key: "barCurve", attr: "bar-curve", group: "Progress bar", label: "Rapid strength", type: "number", default: 2.2, help: "How far ahead the rapid bar runs. 1 is honest; 2.2 shows half the bar at 27% of the video." }),
   f({ key: "barCurveMobile", attr: "bar-curve-mobile", group: "Progress bar", label: "Rapid strength, phones", type: "number", help: "A different strength on touch screens. Empty: the same." }),
+
+  // Chapters & captions
+  f({ key: "chapters", attr: "chapters", group: "Chapters & captions", label: "Chapters", type: "text", placeholder: "0:00 Intro|1:20 Demo|2:40 Offer", help: "A list (`0:00 Intro|1:20 Demo|2:40 Offer`) or the URL of a WebVTT chapters file. Adds marks on the bar, the current chapter's title and a chapter list." }),
+  f({ key: "captions", attr: "captions", group: "Chapters & captions", label: "Captions file", type: "text", placeholder: "/captions/en.vtt", help: "URL of a WebVTT (.vtt) file. Several languages: `en=/captions/en.vtt nl=/captions/nl.vtt`. A file on another site must allow the request (CORS)." }),
+  f({ key: "captionsLang", attr: "captions-lang", group: "Chapters & captions", label: "Captions language", type: "text", placeholder: "en", help: "Language of the captions file, e.g. `en`. With several files: the one to start with." }),
+  f({ key: "captionsOn", attr: "captions-on", group: "Chapters & captions", label: "Captions on at the start", type: "boolean", default: false, help: "Show captions before the viewer has chosen. Their own choice is remembered and wins." }),
+
+  // Mini player
+  f({ key: "mini", attr: "mini", group: "Mini player", label: "Float in a corner", type: "select", default: "", options: [{ value: "", label: "Off" }, { value: "bottom-right", label: "Bottom right" }, { value: "bottom-left", label: "Bottom left" }, { value: "top-right", label: "Top right" }, { value: "top-left", label: "Top left" }], help: "When the viewer scrolls the video out of view it keeps playing in this corner; scrolling back or closing it returns it. The page keeps the player's space, so nothing jumps." }),
+  f({ key: "miniWidth", attr: "mini-width", group: "Mini player", label: "Width", type: "number", default: 320, help: "Width of the floating player in pixels (160 to 640). Phones use at most 60% of the screen; it is never taller than half the window." }),
+  f({ key: "miniWhen", attr: "mini-when", group: "Mini player", label: "Float while", type: "select", default: "playing", options: [{ value: "playing", label: "Playing with sound" }, { value: "always", label: "Also the muted preview and paused" }], help: "By default only a video that plays with sound follows the viewer." }),
+  f({ key: "miniClose", attr: "mini-close", group: "Mini player", label: "Close button", type: "boolean", default: true, help: "A close button on the floating player. Closing returns the player to its place for the rest of the page view." }),
 
   // Call to action
   f({ key: "ctaAt", attr: "cta-at", group: "Call to action", label: "Show at", type: "time", placeholder: "6:11", help: "When the button appears (the offer). Also unlocks `data-keepwatch-gate` sections on the page." }),
@@ -251,6 +268,17 @@ export function validateConfig(raw: unknown): { config: KeepwatchConfig; issues:
       issues.push({ key, message: 'is not a time like "6:11" or "371".' });
       continue;
     }
+    if (key === "chapters" && value !== "") {
+      const chapters = chaptersInput(String(value));
+      if (!chapters || ("inline" in chapters && chapters.inline.length === 0)) {
+        issues.push({ key, message: 'is not a list like "0:00 Intro|1:20 Demo" or the URL of a .vtt file.' });
+        continue;
+      }
+    }
+    if (key === "captions" && value !== "" && parseCaptionTracks(String(value), null).length === 0) {
+      issues.push({ key, message: 'is not the URL of a .vtt file, or a list like "en=/en.vtt nl=/nl.vtt".' });
+      continue;
+    }
     if (key === "src" && value !== "" && !parseSource(String(value))) {
       issues.push({ key, message: "is not a Vimeo, YouTube or Loom link, or a video file URL." });
       continue;
@@ -270,7 +298,9 @@ export function settingsMarkdown(): string {
       const where = "css" in field && field.css ? `\`${field.css}\`` : `\`${"attr" in field ? field.attr : ""}\``;
       const def = "default" in field && field.default !== "" ? `\`${String(field.default)}\`` : "";
       const opts = "options" in field ? ` Options: ${field.options.map((o) => `\`${o.value || '""'}\``).join(", ")}.` : "";
-      lines.push(`| \`${field.key}\` | ${where} | ${def} | ${field.label}. ${field.help}${opts} |`);
+      // A "|" inside a cell would end it: chapters are written with pipes.
+      const what = `${field.label}. ${field.help}${opts}`.replace(/\|/g, "\\|");
+      lines.push(`| \`${field.key}\` | ${where} | ${def} | ${what} |`);
     }
     lines.push("");
   }

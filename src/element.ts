@@ -1,7 +1,8 @@
+import { barMode, barPosition, canSeek, clampSeek } from "./bar.ts";
+import { chapterAt, chapterMarks, chaptersFromCues, chaptersInput, fitChapters, type Chapter } from "./chapters.ts";
 import {
   clock,
   ctaVisible,
-  displayProgress,
   mmss,
   parseTime,
   pickVariant,
@@ -17,8 +18,14 @@ import { icon, type IconName } from "./icons.ts";
 import { providerFor, resolveSource } from "./providers/index.ts";
 import type { MediaHandle, Provider } from "./providers/types.ts";
 import { plainUrl, providerName, sourceKey } from "./sources.ts";
-import { claimAudio, installGateStyle, load, onAudioClaimed, save, unlockGates } from "./store.ts";
+import { miniCorner, miniWhen, shouldFloat, type Corner } from "./mini.ts";
+import { claimAudio, installGateStyle, load, loadPrefs, onAudioClaimed, save, savePrefs, unlockGates } from "./store.ts";
 import { CSS } from "./styles.ts";
+import { CaptionsView } from "./ui/captions.ts";
+import { el, fetchText, reducedMotion } from "./ui/dom.ts";
+import { Floater } from "./ui/floating.ts";
+import { Rail } from "./ui/rail.ts";
+import { parseCaptionTracks, parseVtt, pickCaptionTrack, type CaptionTrack } from "./vtt.ts";
 
 /**
  * <keep-watch>: a VSL player over Vimeo, YouTube, Loom or a
@@ -53,6 +60,12 @@ import { CSS } from "./styles.ts";
  *   unmute-text   Unmute card line. Default per language ("Click to unmute").
  *   exit-poster   Image shown behind the pause screen, instead of the frozen frame.
  *   smart-pause   Boolean. Pause when the tab is hidden, play on when it comes back.
+ *   bar           "rapid" (default, a display), "linear" (the real position, seekable) or "none".
+ *   seek          "false" keeps a linear bar a display. The rapid bar never seeks.
+ *   chapters      "0:00 Intro|1:20 Demo|2:40 Offer", or the URL of a WebVTT chapters file.
+ *   captions      URL of a WebVTT file, or "en=/en.vtt nl=/nl.vtt". captions-lang, captions-on go with it.
+ *   mini          A corner ("bottom-right", …): float there when a playing video scrolls out of view.
+ *                 mini-width, mini-when and mini-close tune it.
  *
  * Page hooks
  *   [data-keepwatch-gate]  hidden until the CTA unlocks (or the video fails to load).
@@ -60,6 +73,9 @@ import { CSS } from "./styles.ts";
  *   keepwatch:play, keepwatch:unmute, keepwatch:pause, keepwatch:cta-shown,
  *   keepwatch:cta-click, keepwatch:ended, keepwatch:error, and keepwatch:progress
  *   (detail.percent 25, 50, 75, 90) for pixels and tag managers. Seconds count with sound on only.
+ *   Also keepwatch:chapter (detail.index, title, start), keepwatch:seek (detail.from, to),
+ *   keepwatch:captions (detail.on, lang) and keepwatch:mini (detail.floating). These four are
+ *   DOM events only; nothing new is sent to the collector.
  *
  * Until it starts, the frame is a poster and no provider player exists.
  */
@@ -77,17 +93,6 @@ const IDLE_MS = 2_500;
 const REWIND_SEC = 10;
 const DEFAULT_SPEEDS = [0.75, 1, 1.25, 1.5, 2];
 const MILESTONES = [25, 50, 75, 90];
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  attrs: Record<string, string> = {},
-  ...children: (Node | string)[]
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
-  node.append(...children);
-  return node;
-}
 
 function sessionId(): string {
   const bytes = new Uint8Array(18);
@@ -129,7 +134,13 @@ function readVariants(host: HTMLElement): Variant[] {
   return source ? [{ id: slug(sourceKey(source)), weight: 1, source }] : [];
 }
 
-const ALL_CONTROLS = "play rewind sound time speed fullscreen";
+const ALL_CONTROLS = "play rewind sound time speed captions chapters fullscreen";
+/** The floating player is small: it keeps the buttons a viewer needs there. */
+const MINI_CONTROLS = new Set(["play", "sound", "fullscreen"]);
+/** A chapter jump lands just inside the chapter, so a provider that seeks a frame early still reports it. */
+const CHAPTER_NUDGE_SEC = 0.05;
+
+type Menu = "" | "speed" | "chapters" | "captions";
 
 function isTouch(): boolean {
   return window.matchMedia?.("(pointer: coarse)").matches ?? false;
@@ -164,12 +175,20 @@ export class KeepWatchElement extends HTMLElement {
   static observedAttributes = ["src", "variants"];
 
   private root: ShadowRoot;
+  /** Everything the viewer sees. It floats as the mini player; the element keeps its box. */
+  private frame: HTMLDivElement;
+  /** What the element shows in its own place while the frame floats. */
+  private ghost: HTMLDivElement;
   private stage: HTMLDivElement;
   private poster: HTMLImageElement;
   private layer: HTMLDivElement;
   private chrome: HTMLDivElement;
-  private rail: HTMLDivElement;
+  private rail: Rail;
+  private captionsView = new CaptionsView();
+  private floater: Floater;
   private timeLabel: HTMLSpanElement | null = null;
+  private chapterButton: HTMLButtonElement | null = null;
+  private chapterLabel: HTMLSpanElement | null = null;
   private cleanups: (() => void)[] = [];
 
   private t: Strings = stringsFor("en").t;
@@ -184,7 +203,19 @@ export class KeepWatchElement extends HTMLElement {
   private muted = true;
   private rate = 1;
   private rateLocked = false;
-  private menuOpen = false;
+  private menu: Menu = "";
+  /** Counts inits, so a slow download from an earlier `src` is dropped. */
+  private gen = 0;
+  /** As given by the page; `chapterList()` drops the ones past the end. */
+  private chapters: Chapter[] = [];
+  private chapterUrl: string | null = null;
+  private chapterIndex = -1;
+  private tracks: CaptionTrack[] = [];
+  /** The captions showing; null is off. */
+  private track: CaptionTrack | null = null;
+  private corner: Corner | null = null;
+  /** The viewer closed the mini player: it stays closed for this page view. */
+  private miniDismissed = false;
   private resumeAt: number | null = null;
   private loadTimer = 0;
   private graceTimer = 0;
@@ -234,12 +265,21 @@ export class KeepWatchElement extends HTMLElement {
     this.poster = el("img", { class: "poster", alt: "", decoding: "async" });
     this.layer = el("div");
     this.chrome = el("div", { class: "chrome" });
-    this.rail = el(
-      "div",
-      { class: "rail", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100" },
-      el("div", { class: "fill" }),
-    );
-    this.root.append(style, this.stage, this.poster, this.layer, this.chrome, this.rail);
+    this.rail = new Rail({
+      seek: (to) => this.seekTo(to),
+      describe: (time) => this.describe(time),
+      wake: () => this.wake(),
+    });
+    this.frame = el("div", { class: "frame" }, this.stage, this.poster, this.captionsView.el, this.layer, this.chrome, this.rail.el);
+    this.ghost = el("div", { class: "ghost", "aria-hidden": "true" });
+    this.floater = new Floater(this, this.frame, () => {
+      if (this.syncMini()) this.render();
+    });
+    this.root.append(style, this.ghost, this.frame);
+  }
+
+  private get menuOpen(): boolean {
+    return this.menu !== "";
   }
 
   connectedCallback() {
@@ -288,6 +328,14 @@ export class KeepWatchElement extends HTMLElement {
 
   private init() {
     ({ lang: this.locale, t: this.t } = stringsFor(this.getAttribute("lang") || document.documentElement.lang));
+    this.gen++;
+    this.chapters = [];
+    this.chapterUrl = null;
+    this.chapterIndex = -1;
+    this.tracks = [];
+    this.track = null;
+    this.corner = null;
+    this.miniDismissed = false;
     const expires = Date.parse(this.getAttribute("expires") ?? "");
     if (Number.isFinite(expires) && Date.now() >= expires) {
       this.setPhase("expired");
@@ -312,6 +360,7 @@ export class KeepWatchElement extends HTMLElement {
 
     this.s = { ...this.s, sid: sessionId(), ready: false, started: false, furthest: 0, watched: 0, beatAtWatched: 0, milestones: 0 };
     this.cleanups.push(onAudioClaimed(this, () => void this.media?.pause().catch(() => {})));
+    this.readExtras();
     this.fetchMeta();
     this.setPhase("idle");
     this.emit("ready");
@@ -336,6 +385,37 @@ export class KeepWatchElement extends HTMLElement {
     } else this.begin("auto");
   }
 
+  /** Chapters, captions and the mini player, as the page set them. Files are fetched when the video starts. */
+  private readExtras() {
+    const chapters = chaptersInput(this.getAttribute("chapters"));
+    if (chapters && "inline" in chapters) this.chapters = chapters.inline;
+    else if (chapters) this.chapterUrl = chapters.url;
+
+    const lang = this.getAttribute("captions-lang");
+    this.tracks = parseCaptionTracks(this.getAttribute("captions"), lang);
+    this.track = pickCaptionTrack(this.tracks, loadPrefs().captions, this.flag("captions-on"), [lang, this.locale, navigator.language]);
+
+    this.corner = miniCorner(this.getAttribute("mini"));
+    if (this.corner) this.cleanups.push(this.floater.watch());
+  }
+
+  /** The first start: get the files the page pointed at. Each is fetched once. */
+  private loadExtras() {
+    this.captionsView.select(this.track);
+    const url = this.chapterUrl;
+    if (!url) return;
+    this.chapterUrl = null;
+    const gen = this.gen;
+    void fetchText(url, "chapters").then((text) => {
+      if (gen !== this.gen) return;
+      this.chapters = chaptersFromCues(parseVtt(text));
+      this.chapterIndex = -1;
+      this.renderChrome();
+      this.paintProgress();
+      if (this.phase === "playing" || this.phase === "paused") this.syncChapter();
+    });
+  }
+
   /** Page-level listeners: report on hide, show controls on movement, close the menu outside. */
   private listen() {
     const onHide = () => {
@@ -354,12 +434,15 @@ export class KeepWatchElement extends HTMLElement {
     const onLeave = () => {
       if (!this.menuOpen) this.removeAttribute("data-active");
     };
-    const onFullscreen = () => this.renderChrome();
+    const onFullscreen = () => {
+      if (this.syncMini()) this.render();
+      else this.renderChrome();
+    };
     const onDocClick = (e: MouseEvent) => {
-      if (this.menuOpen && !e.composedPath().includes(this)) this.toggleMenu(false);
+      if (this.menuOpen && !e.composedPath().includes(this)) this.showMenu("");
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && this.menuOpen) this.toggleMenu(false);
+      if (e.key === "Escape" && this.menuOpen) this.showMenu("", true);
     };
     document.addEventListener("visibilitychange", onHide);
     window.addEventListener("pagehide", onHide);
@@ -381,6 +464,7 @@ export class KeepWatchElement extends HTMLElement {
 
   private teardown() {
     for (const c of this.cleanups.splice(0)) c();
+    this.captionsView.select(null);
     this.unmount();
   }
 
@@ -458,6 +542,7 @@ export class KeepWatchElement extends HTMLElement {
     this.time = opts.at;
     this.muted = !opts.sound;
     this.setPhase("loading");
+    this.loadExtras();
 
     const media = provider.mount(
       this.stage,
@@ -575,11 +660,13 @@ export class KeepWatchElement extends HTMLElement {
     if (duration > 0) this.duration = duration;
     this.time = seconds;
     this.paintProgress();
+    this.captionsView.update(seconds);
     if (this.phase === "muted") {
       const loop = parseTime(this.getAttribute("preview-loop"));
       if (loop && seconds >= loop) void this.media?.seek(0).catch(() => {});
       return;
     }
+    this.syncChapter();
     if (!s.audible) return;
     const delta = seconds - s.last;
     if (delta > 0 && delta < 1.5) s.watched += delta;
@@ -748,6 +835,115 @@ export class KeepWatchElement extends HTMLElement {
     void media.seek(to).catch(() => {});
   };
 
+  /**
+   * Go to a time: the seekable bar and the chapter list. Like going back, a
+   * jump is not watching: no seconds are counted for it.
+   */
+  private seekTo(to: number) {
+    const media = this.media;
+    if (!media) return;
+    const from = this.time;
+    const target = clampSeek(to, this.duration);
+    this.s.last = target;
+    this.time = target;
+    this.paintProgress();
+    this.captionsView.update(target);
+    void media.seek(target).catch(() => {});
+    this.emit("seek", { from, to: target });
+    this.syncChapter();
+  }
+
+  private chapterList(): Chapter[] {
+    return fitChapters(this.chapters, this.duration);
+  }
+
+  /** The chapter under the clock changed: update its title in place and tell the page. */
+  private syncChapter() {
+    const list = this.chapterList();
+    const at = chapterAt(list, this.time);
+    if (at === this.chapterIndex) return;
+    this.chapterIndex = at;
+    const chapter = list[at];
+    if (this.chapterLabel) this.chapterLabel.textContent = chapter?.title ?? this.t.chapters;
+    this.chapterButton?.setAttribute("aria-label", this.chapterName(chapter));
+    this.chrome.querySelectorAll(".menu.chapters button").forEach((b, i) => {
+      if (i === at) b.setAttribute("aria-current", "true");
+      else b.removeAttribute("aria-current");
+    });
+    if (chapter) this.emit("chapter", { index: at, title: chapter.title, start: chapter.start });
+  }
+
+  private chapterName(chapter: Chapter | undefined): string {
+    return chapter ? `${this.t.chapters}: ${chapter.title}` : this.t.chapters;
+  }
+
+  private jumpChapter(chapter: Chapter) {
+    this.showMenu("", true);
+    this.seekTo(chapter.start > 0 ? chapter.start + CHAPTER_NUDGE_SEC : 0);
+  }
+
+  /** The bar's tooltip: the time, and the chapter there. */
+  private describe(time: number): string {
+    const list = this.chapterList();
+    const chapter = list[chapterAt(list, time)];
+    return chapter ? `${mmss(time)} · ${chapter.title}` : mmss(time);
+  }
+
+  /** Turn captions on (a track) or off (null), and remember it for the next video and visit. */
+  private setCaptions(track: CaptionTrack | null) {
+    this.track = track;
+    this.captionsView.select(track);
+    this.captionsView.update(this.time);
+    savePrefs({ captions: track ? track.lang || "on" : "off" });
+    this.emit("captions", { on: track !== null, lang: track ? track.lang : null });
+    if (this.menuOpen) this.showMenu("", true);
+    // The one-file switch is updated in place, so a keyboard user keeps their focus on it.
+    else this.chrome.querySelector(".ctl.cc")?.setAttribute("aria-pressed", String(track !== null));
+  }
+
+  private trackName(track: CaptionTrack): string {
+    if (!track.lang) return this.t.captions;
+    try {
+      const name = new Intl.DisplayNames([this.locale], { type: "language" }).of(track.lang);
+      if (name && name !== track.lang) return name.charAt(0).toUpperCase() + name.slice(1);
+    } catch {
+      // An unknown tag, or no Intl.DisplayNames: show the code.
+    }
+    return track.lang.toUpperCase();
+  }
+
+  /** Float or return the player, as mini.ts decides. True when it changed (the caller renders). */
+  private syncMini(): boolean {
+    const want = shouldFloat({
+      corner: this.corner,
+      when: miniWhen(this.getAttribute("mini-when")),
+      phase: this.phase,
+      inView: this.floater.inView,
+      dismissed: this.miniDismissed,
+      fullscreen: Boolean(document.fullscreenElement),
+      floating: this.floater.floating,
+    });
+    return this.setFloating(want);
+  }
+
+  private setFloating(want: boolean): boolean {
+    if (want === this.floater.floating) return false;
+    if (want && this.corner) this.floater.float(this.corner, Number(this.getAttribute("mini-width")) || null);
+    else this.floater.unfloat();
+    this.menu = "";
+    this.emit("mini", { floating: this.floater.floating });
+    return true;
+  }
+
+  private closeMini = () => {
+    this.miniDismissed = true;
+    if (this.syncMini()) this.render();
+  };
+
+  private backToVideo = () => {
+    this.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" });
+  };
+
   private toggleSound = () => {
     const media = this.media;
     if (!media) return;
@@ -763,7 +959,7 @@ export class KeepWatchElement extends HTMLElement {
 
   private setRate(rate: number) {
     const media = this.media;
-    this.toggleMenu(false);
+    this.showMenu("", true);
     if (!media) return;
     void media.setRate(rate).then((ok) => {
       if (ok) this.rate = rate;
@@ -772,16 +968,39 @@ export class KeepWatchElement extends HTMLElement {
     });
   }
 
-  private toggleMenu(open = !this.menuOpen) {
-    this.menuOpen = open;
+  /** Open one menu (or none). `refocus` puts the keyboard back on the button that opened it. */
+  private showMenu(menu: Menu, refocus = false) {
+    const was = this.menu;
+    this.menu = menu;
     this.renderChrome();
-    if (open) this.chrome.querySelector<HTMLButtonElement>(".menu button")?.focus();
+    const find = (q: string) => this.chrome.querySelector<HTMLButtonElement>(q);
+    if (menu) (find('.menu:not([hidden]) button[aria-current="true"]') ?? find(".menu:not([hidden]) button"))?.focus();
+    else if (refocus && was) find(`[data-menu="${was}"]`)?.focus();
+  }
+
+  private toggleMenu(menu: Menu) {
+    this.showMenu(this.menu === menu ? "" : menu, true);
   }
 
   private fullscreen = () => {
-    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
-    else if (this.requestFullscreen) void this.requestFullscreen().catch(() => this.media?.nativeFullscreen?.());
-    else void this.media?.nativeFullscreen?.().catch(() => {});
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+      return;
+    }
+    // Full screen is the element itself: bring the mini player home first, so it never covers its own video.
+    if (this.setFloating(false)) this.render();
+    const resync = () => {
+      if (this.syncMini()) this.render();
+    };
+    if (this.requestFullscreen) {
+      void this.requestFullscreen().catch(() => {
+        resync();
+        return this.media?.nativeFullscreen?.();
+      });
+    } else {
+      resync();
+      void this.media?.nativeFullscreen?.().catch(() => {});
+    }
   };
 
   private replay = () => {
@@ -823,7 +1042,8 @@ export class KeepWatchElement extends HTMLElement {
   private setPhase(phase: Phase) {
     this.phase = phase;
     this.setAttribute("data-phase", phase);
-    if (phase !== "playing" && phase !== "paused") this.menuOpen = false;
+    if (phase !== "playing" && phase !== "paused") this.menu = "";
+    this.syncMini();
     this.render();
   }
 
@@ -904,14 +1124,10 @@ export class KeepWatchElement extends HTMLElement {
     }
     if (phase === "paused") {
       const cta = unlocked || this.pauseCta ? this.cta() : null;
-      nodes.push(
-        el(
-          "div",
-          { class: "panel" },
-          el("p", {}, t.paused),
-          el("div", { class: "actions" }, this.button(t.resumeContinue, this.toggle), ...(cta ? [cta] : [])),
-        ),
-      );
+      // In the mini player there is no room for the pause panel's text: the play button is in the controls.
+      const words = this.floater.floating ? [] : [el("p", {}, t.paused)];
+      const again = this.floater.floating ? [] : [this.button(t.resumeContinue, this.toggle)];
+      nodes.push(el("div", { class: "panel" }, ...words, el("div", { class: "actions" }, ...again, ...(cta ? [cta] : []))));
     }
     if (phase === "ended") {
       const cta = this.cta();
@@ -930,10 +1146,23 @@ export class KeepWatchElement extends HTMLElement {
       const cta = this.cta();
       nodes.push(el("div", { class: "panel" }, el("p", {}, t.error), el("div", { class: "actions" }, open, ...(cta ? [cta] : []))));
     }
+    let ctaOnVideo = false;
     if (phase === "playing" && !this.pauseCta && this.ctaInWindow()) {
       const cta = this.cta();
       if (cta) nodes.push(el("div", { class: this.controllable ? "cta" : "cta bare" }, cta));
+      ctaOnVideo = cta !== null;
     }
+    this.captionsView.el.classList.toggle("over-cta", ctaOnVideo);
+
+    // Floating: a way back and a way out on the mini player, and a note where the player was.
+    const floating = this.floater.floating;
+    if (floating) {
+      const back = this.button(icon("restore"), this.backToVideo, "mini-btn back", t.miniBack);
+      nodes.push(back);
+      if (this.getAttribute("mini-close") !== "false") nodes.push(this.button(icon("x"), this.closeMini, "mini-btn close", t.miniClose));
+      const image = this.posterSrc ? [el("img", { src: this.posterSrc, alt: "" })] : [];
+      this.ghost.replaceChildren(...image, el("span", {}, t.miniPlaying));
+    } else if (this.ghost.firstChild) this.ghost.replaceChildren();
 
     this.layer.replaceChildren(...nodes);
     this.renderChrome();
@@ -948,11 +1177,16 @@ export class KeepWatchElement extends HTMLElement {
   private renderChrome() {
     const t = this.t;
     const show = (this.phase === "playing" || this.phase === "paused") && this.controllable;
-    const want = new Set((this.getAttribute("controls") ?? ALL_CONTROLS).split(/[\s,]+/).filter(Boolean));
+    const asked = (this.getAttribute("controls") ?? ALL_CONTROLS).split(/[\s,]+/).filter(Boolean);
+    const want = new Set(this.floater.floating ? asked.filter((c) => MINI_CONTROLS.has(c)) : asked);
+    const mode = barMode(this.getAttribute("bar"));
     this.chrome.hidden = !show || want.size === 0;
-    this.rail.hidden = !show || this.getAttribute("bar") === "none";
+    this.rail.hidden = !show || mode === "none";
+    this.rail.configure({ seekable: show && canSeek(mode, this.getAttribute("seek")), label: t.seek });
     this.chrome.classList.toggle("open", this.menuOpen);
     this.timeLabel = null;
+    this.chapterButton = null;
+    this.chapterLabel = null;
     if (!show) {
       this.chrome.replaceChildren();
       return;
@@ -972,14 +1206,37 @@ export class KeepWatchElement extends HTMLElement {
       this.timeLabel = el("span", { class: "time", "aria-hidden": "true" }, clock(this.time));
       middle.push(this.timeLabel);
     }
+    const chapters = this.chapterList();
+    if (want.has("chapters") && chapters.length > 0) {
+      const current = chapters[chapterAt(chapters, this.time)];
+      this.chapterLabel = el("span", { class: "label" }, current?.title ?? t.chapters);
+      const chip = this.button(icon("list"), () => this.toggleMenu("chapters"), "ctl chip", this.chapterName(current));
+      chip.append(this.chapterLabel);
+      chip.setAttribute("aria-expanded", String(this.menu === "chapters"));
+      chip.setAttribute("aria-haspopup", "true");
+      chip.setAttribute("data-menu", "chapters");
+      this.chapterButton = chip;
+      if (this.menu === "chapters") {
+        const list = el("div", { class: "menu list start chapters", role: "group", "aria-label": t.chapters }, el("h3", {}, t.chapters));
+        for (const c of chapters) {
+          const item = this.button(el("span", { class: "when" }, mmss(c.start)), () => this.jumpChapter(c), "");
+          item.append(el("span", { class: "what" }, c.title), icon("check"));
+          if (c === current) item.setAttribute("aria-current", "true");
+          list.append(item);
+        }
+        middle.push(list);
+      }
+      middle.push(chip);
+    }
     const right: Node[] = [];
     const speeds = readSpeeds(this);
     if (want.has("speed") && speeds.length > 0 && !this.rateLocked) {
-      const gear = this.ctl("settings", t.settings, () => this.toggleMenu());
-      gear.setAttribute("aria-expanded", String(this.menuOpen));
+      const gear = this.ctl("settings", t.settings, () => this.toggleMenu("speed"));
+      gear.setAttribute("aria-expanded", String(this.menu === "speed"));
       gear.setAttribute("aria-haspopup", "true");
+      gear.setAttribute("data-menu", "speed");
       const menu = el("div", { class: "menu", role: "group", "aria-label": t.speed }, el("h3", {}, t.speed));
-      menu.hidden = !this.menuOpen;
+      menu.hidden = this.menu !== "speed";
       for (const r of speeds) {
         const item = this.button(el("span", {}, r === 1 ? t.normal : `${r}×`), () => this.setRate(r), "");
         item.append(icon("check"));
@@ -987,6 +1244,36 @@ export class KeepWatchElement extends HTMLElement {
         menu.append(item);
       }
       right.push(menu, gear);
+    }
+    if (want.has("captions") && this.tracks.length > 0) {
+      const on = this.track !== null;
+      if (this.tracks.length === 1) {
+        // One file: the button is the switch.
+        const only = this.tracks[0];
+        const cc = this.ctl("captions", t.captions, () => this.setCaptions(this.track ? null : only));
+        cc.classList.add("cc");
+        cc.setAttribute("aria-pressed", String(on));
+        right.push(cc);
+      } else {
+        const cc = this.ctl("captions", t.captions, () => this.toggleMenu("captions"));
+        cc.setAttribute("aria-pressed", String(on));
+        cc.setAttribute("aria-expanded", String(this.menu === "captions"));
+        cc.setAttribute("aria-haspopup", "true");
+        cc.setAttribute("data-menu", "captions");
+        if (this.menu === "captions") {
+          const list = el("div", { class: "menu list", role: "group", "aria-label": t.captions }, el("h3", {}, t.captions));
+          const choices: [string, CaptionTrack | null][] = [[t.captionsOff, null], ...this.tracks.map((tr): [string, CaptionTrack] => [this.trackName(tr), tr])];
+          for (const [name, tr] of choices) {
+            const item = this.button(el("span", {}, name), () => this.setCaptions(tr), "");
+            item.append(icon("check"));
+            if (tr?.lang) item.lang = tr.lang;
+            item.setAttribute("aria-pressed", String(tr === this.track));
+            list.append(item);
+          }
+          right.push(list);
+        }
+        right.push(cc);
+      }
     }
     if (want.has("fullscreen")) right.push(this.ctl(full ? "minimize" : "maximize", full ? t.exitFullscreen : t.fullscreen, this.fullscreen));
 
@@ -1004,25 +1291,27 @@ export class KeepWatchElement extends HTMLElement {
 
   private paintProgress() {
     const d = this.duration;
-    const bar = this.getAttribute("bar");
+    const mode = barMode(this.getAttribute("bar"));
     const mobile = isTouch() ? Number(this.getAttribute("bar-curve-mobile")) : 0;
-    const curve = bar === "linear" ? 1 : mobile || Number(this.getAttribute("bar-curve")) || BAR_CURVE;
-    this.style.setProperty("--kw-p", String(displayProgress(this.time, d, curve)));
+    const curve = mobile || Number(this.getAttribute("bar-curve")) || BAR_CURVE;
+    this.style.setProperty("--kw-p", String(barPosition(this.time, d, mode, curve)));
     if (this.timeLabel) this.timeLabel.textContent = clock(this.time);
-    if (d > 0) {
-      this.rail.setAttribute("aria-valuenow", String(Math.round((Math.min(this.time, d) / d) * 100)));
-      this.rail.setAttribute("aria-valuetext", `${mmss(this.time)} ${this.t.of} ${mmss(d)}`);
-    }
+    // Marks use the same curve as the fill, so on a rapid bar they sit where the fill will meet them.
+    this.rail.marks(chapterMarks(this.chapters, d, mode, curve));
+    const list = this.chapterList();
+    const chapter = list[chapterAt(list, this.time)];
+    const text = `${mmss(this.time)} ${this.t.of} ${mmss(d)}`;
+    this.rail.paint({ time: this.time, duration: d, text: chapter ? `${text}, ${this.t.chapter}: ${chapter.title}` : text });
   }
 
   // ------------------------------------------------------------ reporting
 
-  private emit(name: string) {
+  private emit(name: string, extra: Record<string, unknown> = {}) {
     this.dispatchEvent(
       new CustomEvent(`keepwatch:${name}`, {
         bubbles: true,
         composed: true,
-        detail: { video: this.video, variant: this.variant?.id, time: this.time },
+        detail: { video: this.video, variant: this.variant?.id, time: this.time, ...extra },
       }),
     );
   }

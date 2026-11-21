@@ -198,6 +198,20 @@ export function cidFor(store: KV | null, key: string, now: number, fresh: string
   return fresh;
 }
 
+/**
+ * The send id for a sale without an order id: the first 32 hex characters
+ * of SHA-256(viewer, dedupe key, 30-minute window number). Deterministic,
+ * so two tabs (or a retry) in the same window send the same cid without
+ * sharing a lock, and the collector stores the sale once. Hex is inside the
+ * [0-9a-z]{32} cid format. Null without SubtleCrypto: the caller falls back
+ * to `cidFor`, a stored random id, which two tabs racing can still split.
+ * Two sends either side of a window boundary get different cids.
+ */
+export async function windowCid(viewerId: string, key: string, now: number, subtle: SubtleCrypto | null): Promise<string | null> {
+  const h = await sha256Hex(`keepwatch-cid:${viewerId}|${key}|${Math.floor(now / UNNAMED_TTL_MS)}`, subtle);
+  return h ? h.slice(0, 32) : null;
+}
+
 /** For tests: forget the in-page memory of sent conversions and of this page's viewer. */
 export function resetPageState(): void {
   sentHere.clear();
@@ -263,10 +277,10 @@ export async function prepareConversion(input: ConvertInput, ctx: ConvertContext
   if (value === null) return { ok: false, reason: "value must be a number from 0 to 100000" };
   if (currency === null) return { ok: false, reason: "currency must be a three-letter ISO 4217 code" };
   let orderHash: string | null = null;
+  const subtle = ctx.subtle === undefined ? (globalThis.crypto?.subtle ?? null) : ctx.subtle;
   if (input.id !== undefined && input.id !== "") {
     const o = orderId(input.id);
     if (o === null) return { ok: false, reason: "id must be 1-64 letters, digits or . _ : # / -" };
-    const subtle = ctx.subtle === undefined ? (globalThis.crypto?.subtle ?? null) : ctx.subtle;
     orderHash = await sha256Hex(`keepwatch:${ctx.site}:${o}`, subtle);
   }
   const last = lastWatched(ctx.store);
@@ -274,9 +288,10 @@ export async function prepareConversion(input: ConvertInput, ctx: ConvertContext
   if (!endpoint) return { ok: false, reason: "no collect endpoint: pass { collect } or watch a player with collect first" };
   const key = orderHash ? `order:${orderHash}` : `page:${ctx.path}|${value}|${currency}`;
   if (alreadySent(ctx.store, key, ctx.now)) return { ok: false, reason: "already sent" };
+  const cid = (orderHash ? null : await windowCid(ctx.viewer.id, key, ctx.now, subtle)) ?? cidFor(ctx.store, key, ctx.now, ctx.cid);
   const body: Conversion = {
     kind: "conversion",
-    cid: cidFor(ctx.store, key, ctx.now, ctx.cid),
+    cid,
     site: ctx.site,
     viewer: ctx.viewer.id,
     returning: ctx.viewer.returning,

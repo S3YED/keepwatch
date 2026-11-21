@@ -200,17 +200,17 @@ test("two overlapping calls send once; a failed one releases the key for a retry
   }
 });
 
-test("without an order id, every attempt inside the window carries the same cid; after it, a new one", async () => {
+test("without SubtleCrypto, the no-order cid falls back to a stored random id, kept inside the window", async () => {
   const store = memory();
   const input = { value: 97, currency: "USD", collect: COLLECT };
   const down: Transport = async () => false;
-  const first = await sendConversion(input, ctx(store, { cid: "c".repeat(32) }), down);
+  const first = await sendConversion(input, ctx(store, { subtle: null, cid: "c".repeat(32) }), down);
   resetPageState(); // another page load (or tab): only storage remembers
-  const retry = await sendConversion(input, ctx(store, { cid: "d".repeat(32), now: 1_000 + UNNAMED_TTL_MS - 1 }), ok);
+  const retry = await sendConversion(input, ctx(store, { subtle: null, cid: "d".repeat(32), now: 1_000 + UNNAMED_TTL_MS - 1 }), ok);
   expect(first.ok && first.body.cid).toBe("c".repeat(32));
   expect(retry.ok && retry.body.cid).toBe("c".repeat(32));
   resetPageState();
-  const later = await sendConversion(input, ctx(store, { cid: "e".repeat(32), now: 1_000 + 2 * UNNAMED_TTL_MS }), ok);
+  const later = await sendConversion(input, ctx(store, { subtle: null, cid: "e".repeat(32), now: 1_000 + 2 * UNNAMED_TTL_MS }), ok);
   expect(later.ok && later.sent && later.body.cid).toBe("e".repeat(32));
 });
 
@@ -301,7 +301,8 @@ test("a video named viewer, last, converted or cids keeps its playback state apa
     for (const video of ["last", "converted", "cids"]) save(video, { variant: "a", pos: 7 });
     const who = visit(store, 1_000, ids(A));
     rememberWatched(store, { video: "viewer", variant: "a", collect: COLLECT, at: 1_000 });
-    await sendConversion({ value: 97, currency: "USD", collect: COLLECT }, ctx(store), ok);
+    // subtle: null takes the stored-cid path, so all four tracking keys are written.
+    await sendConversion({ value: 97, currency: "USD", collect: COLLECT }, ctx(store, { subtle: null }), ok);
     save("viewer", { pos: 50 });
     // Playback survived the tracking writes, and tracking survived the playback write.
     expect(load("viewer")).toEqual({ variant: "a", pos: 50, furthest: 60 });
@@ -318,4 +319,38 @@ test("a video named viewer, last, converted or cids keeps its playback state apa
   } finally {
     g.localStorage = before;
   }
+});
+
+test("two tabs (two module instances, one storage) send the same cid for one no-order sale", async () => {
+  const store = memory();
+  // A query string gives a separate module instance: separate in-page state, like a second tab.
+  const tab = (name: string) => import(`./viewer.ts?tab=${name}`) as Promise<typeof import("./viewer.ts")>;
+  const tabA = await tab("a");
+  const tabB = await tab("b");
+  expect(tabA.sendConversion).not.toBe(tabB.sendConversion); // really two instances
+  const input = { value: 97, currency: "USD", collect: COLLECT };
+  const bodies: string[] = [];
+  const slow: Transport = async (_e, json) => {
+    bodies.push(json);
+    await new Promise((r) => setTimeout(r, 5));
+    return true;
+  };
+  // Both tabs start before either has recorded anything, each with its own random candidate.
+  const now = 10 * UNNAMED_TTL_MS + 5;
+  const [a, b] = await Promise.all([
+    tabA.sendConversion(input, ctx(store, { now, cid: "c".repeat(32) }), slow),
+    tabB.sendConversion(input, ctx(store, { now: now + 60_000, cid: "d".repeat(32) }), slow),
+  ]);
+  expect(a.ok && b.ok).toBe(true);
+  const cids = bodies.map((j) => JSON.parse(j).cid);
+  expect(cids.length).toBe(2);
+  expect(cids[0]).toBe(cids[1]);
+  expect(cids[0]).toMatch(/^[0-9a-z]{32}$/);
+  expect(parseConversion(JSON.parse(bodies[0]))).not.toBeNull();
+  expect(cids[0]).toBe(hex(`keepwatch-cid:${A}|page:/thanks|97|USD|10`).slice(0, 32));
+  // Another viewer, another window, or another sale: another cid.
+  expect(await tabA.windowCid(B, "page:/thanks|97|USD", now, crypto.subtle)).not.toBe(cids[0]);
+  expect(await tabA.windowCid(A, "page:/thanks|97|USD", now + UNNAMED_TTL_MS, crypto.subtle)).not.toBe(cids[0]);
+  expect(await tabA.windowCid(A, "page:/thanks|98|USD", now, crypto.subtle)).not.toBe(cids[0]);
+  expect(await tabA.windowCid(A, "k", now, null)).toBeNull();
 });

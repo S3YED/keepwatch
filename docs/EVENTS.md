@@ -50,7 +50,7 @@ Fires: once per `keepwatch.convert()` call or `<keep-watch-convert>` element, un
 | Field | Type | Notes |
 |---|---|---|
 | `kind` | `"conversion"` | Required. |
-| `cid` | string, `[0-9a-z]{32}` | Random per send, so a retried send is stored once. Required. |
+| `cid` | string, `[0-9a-z]{32}` | Identifies the sale for the collector, so a retried send is stored once. Random, or without an order id derived per 30-minute window (below). Required. |
 | `site` | string, hostname, max 120 | The thank-you page's hostname. Required. |
 | `viewer` | string, `[0-9a-z]{32}` | The anonymous viewer id. Required. |
 | `returning` | boolean | The viewer had an earlier visit. A missing value reads as `false`. |
@@ -79,7 +79,7 @@ or, without a script of your own:
 - `collect`: where to send it. Default: the `collect` of the last player this browser watched on this site.
 - `video` and `variant`: always the last video this browser started on this site (stored in localStorage when playback starts). With no such video, or no storage, the conversion is sent without them.
 - `id`: hashed before sending (above). Letters, digits and `. _ : # / -`, 1 to 64.
-- Dedupe in the browser, recorded only after the send succeeded (`sendBeacon` accepted it, or `fetch` went out without a network error), so a failed send is retried on reload. An order is sent once per browser for 30 days. Without an order hash, the same value and currency on the same page path is sent once within 30 minutes (`UNNAMED_TTL_MS`): a reload does not count twice, a second purchase the next day does count. The tradeoff: without an order id, a thank-you page reloaded after 30 min counts again; pass an order id to dedupe for good. Inside the window every attempt carries the same `cid` (kept in `keepwatch/cids`), so a retry, or a second tab, that the collector already received is stored once. Two overlapping calls for the same sale send once: the second resolves `false` while the first is in flight, and a failed first send releases it for a retry. With storage blocked, dedupe holds for the page view only; the collector's `conversionKey` still stores each order once.
+- Dedupe in the browser, recorded only after the send succeeded (`sendBeacon` accepted it, or `fetch` went out without a network error), so a failed send is retried on reload. An order is sent once per browser for 30 days. Without an order hash, the same value and currency on the same page path is sent once within 30 minutes (`UNNAMED_TTL_MS`): a reload does not count twice, a second purchase the next day does count. The tradeoff: without an order id, a thank-you page reloaded after 30 min counts again; pass an order id to dedupe for good. Without an order id the `cid` is deterministic: the first 32 hex characters of SHA-256 of the viewer id, the dedupe key and the 30-minute window number (`windowCid`). Two tabs, or a retry, in the same window send the same `cid` with no cross-tab lock, and the collector stores the sale once. Two sends either side of a window boundary get different cids. Without SubtleCrypto it falls back to a random `cid` kept in `keepwatch/cids` for the window, which two tabs racing can still split. Two overlapping calls for the same sale send once: the second resolves `false` while the first is in flight, and a failed first send releases it for a retry. With storage blocked, dedupe holds for the page view only; the collector's `conversionKey` still stores each order once.
 
 ## Viewer id and returning viewers
 

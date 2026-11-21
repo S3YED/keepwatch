@@ -1,6 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import { CONVERSION_MAX_BYTES, MAX_VALUE, conversionKey, parseConversion } from "./core.ts";
 import { createHash } from "node:crypto";
+import { load, save } from "./store.ts";
 import {
   CONVERTED_TTL_MS,
   UNNAMED_TTL_MS,
@@ -42,7 +43,7 @@ beforeEach(() => resetPageState());
 test("a new browser gets a random viewer id and is not returning", () => {
   const store = memory();
   expect(visit(store, 1_000, ids(A))).toEqual({ id: A, returning: false });
-  expect(JSON.parse(store.data.get("keepwatch:viewer")!)).toEqual({ id: A, visits: 1, last: 1_000 });
+  expect(JSON.parse(store.data.get("keepwatch/viewer")!)).toEqual({ id: A, visits: 1, last: 1_000 });
 });
 
 test("the id persists; a page view within the visit gap is the same visit", () => {
@@ -61,9 +62,9 @@ test("a page view after the gap is a returning viewer, and stays returning", () 
 
 test("a corrupt or foreign stored id is replaced, not trusted", () => {
   const store = memory();
-  store.data.set("keepwatch:viewer", JSON.stringify({ id: "me@example.com", visits: 9, last: 0 }));
+  store.data.set("keepwatch/viewer", JSON.stringify({ id: "me@example.com", visits: 9, last: 0 }));
   expect(visit(store, 10 ** 9, ids(B))).toEqual({ id: B, returning: false });
-  store.data.set("keepwatch:viewer", "{not json");
+  store.data.set("keepwatch/viewer", "{not json");
   expect(visit(store, 10 ** 9, ids(A)).id).toBe(A);
 });
 
@@ -77,7 +78,7 @@ test("last watched round-trips and refuses tampered values", () => {
   expect(lastWatched(store)).toBeNull();
   rememberWatched(store, { video: "clark-vsl", variant: "cut-a", collect: "https://getclark.app/api/vsl", at: 5 });
   expect(lastWatched(store)).toEqual({ video: "clark-vsl", variant: "cut-a", collect: "https://getclark.app/api/vsl", at: 5 });
-  store.data.set("keepwatch:last", JSON.stringify({ video: "<script>", variant: "a" }));
+  store.data.set("keepwatch/last", JSON.stringify({ video: "<script>", variant: "a" }));
   expect(lastWatched(store)).toBeNull();
   expect(lastWatched(blocked)).toBeNull();
   rememberWatched(blocked, { video: "v", variant: "a", at: 0 }); // does not throw
@@ -166,7 +167,7 @@ test("a failed send is not remembered, so a reload retries it", async () => {
   const down: Transport = async () => false;
   const first = await sendConversion(input, ctx(store), down);
   expect(first.ok && first.sent).toBe(false);
-  expect(store.data.has("keepwatch:converted")).toBe(false);
+  expect(store.data.has("keepwatch/converted")).toBe(false);
   const retry = await sendConversion(input, ctx(store), ok);
   expect(retry.ok && retry.sent).toBe(true);
   expect((await sendConversion(input, ctx(store), ok)).ok).toBe(false);
@@ -240,17 +241,17 @@ test("convert refuses bad input and a missing endpoint, and records nothing for 
     ok: false,
     reason: "no collect endpoint: pass { collect } or watch a player with collect first",
   });
-  expect(store.data.has("keepwatch:converted")).toBe(false);
+  expect(store.data.has("keepwatch/converted")).toBe(false);
 });
 
 test("the dedupe record is capped and drops expired entries", () => {
   const store = memory();
   for (let i = 0; i < 80; i++) recordSent(store, `order:k${i}`, i);
-  const list = JSON.parse(store.data.get("keepwatch:converted")!);
+  const list = JSON.parse(store.data.get("keepwatch/converted")!);
   expect(list.length).toBe(50);
   expect(list[0].k).toBe("order:k30");
   recordSent(store, "order:late", CONVERTED_TTL_MS + 100);
-  expect(JSON.parse(store.data.get("keepwatch:converted")!).map((e: { k: string }) => e.k)).toEqual(["order:late"]);
+  expect(JSON.parse(store.data.get("keepwatch/converted")!).map((e: { k: string }) => e.k)).toEqual(["order:late"]);
 });
 
 test("parseConversion is strict: a sale with a bad field is refused whole", () => {
@@ -287,4 +288,34 @@ test("a conversion is stored once per order and site, or once per send without o
   expect(conversionKey({ site: "a.test", cid: B, orderHash: h })).toBe(`order:a.test:${h}`);
   expect(conversionKey({ site: "b.test", cid: B, orderHash: h })).toBe(`order:b.test:${h}`);
   expect(conversionKey({ site: "a.test", cid: B })).toBe(`cid:${B}`);
+});
+
+test("a video named viewer, last, converted or cids keeps its playback state apart from tracking", async () => {
+  const store = memory();
+  const g = globalThis as { localStorage?: unknown };
+  const before = g.localStorage;
+  g.localStorage = store;
+  try {
+    // A resume position saved by 0.3.0 under its playback key, before the upgrade.
+    store.data.set("keepwatch:viewer", JSON.stringify({ variant: "a", pos: 42, furthest: 60 }));
+    for (const video of ["last", "converted", "cids"]) save(video, { variant: "a", pos: 7 });
+    const who = visit(store, 1_000, ids(A));
+    rememberWatched(store, { video: "viewer", variant: "a", collect: COLLECT, at: 1_000 });
+    await sendConversion({ value: 97, currency: "USD", collect: COLLECT }, ctx(store), ok);
+    save("viewer", { pos: 50 });
+    // Playback survived the tracking writes, and tracking survived the playback write.
+    expect(load("viewer")).toEqual({ variant: "a", pos: 50, furthest: 60 });
+    for (const video of ["last", "converted", "cids"]) expect(load(video).pos).toBe(7);
+    expect(who.id).toBe(A);
+    expect(visit(store, 2_000).id).toBe(A);
+    expect(lastWatched(store)?.video).toBe("viewer");
+    expect([...store.data.keys()].filter((k) => k.startsWith("keepwatch/")).sort()).toEqual([
+      "keepwatch/cids",
+      "keepwatch/converted",
+      "keepwatch/last",
+      "keepwatch/viewer",
+    ]);
+  } finally {
+    g.localStorage = before;
+  }
 });

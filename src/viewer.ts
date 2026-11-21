@@ -15,10 +15,17 @@ import { RANDOM_ID, currencyCode, money, orderId, slug, type Conversion } from "
 /** The two Storage methods used here, so tests can pass a fake or a throwing one. */
 export type KV = Pick<Storage, "getItem" | "setItem">;
 
-const VIEWER_KEY = "keepwatch:viewer";
-const LAST_KEY = "keepwatch:last";
-const CONVERTED_KEY = "keepwatch:converted";
-const CIDS_KEY = "keepwatch:cids";
+/**
+ * Tracking state lives under "keepwatch/", playback under "keepwatch:<video>"
+ * (store.ts). Every playback key starts "keepwatch:", so no video id, not
+ * even one named "viewer", can produce a tracking key, and the playback keys
+ * keep their 0.3.0 names: saved resume positions survive the upgrade.
+ */
+export const TRACKING_PREFIX = "keepwatch/";
+export const VIEWER_KEY = `${TRACKING_PREFIX}viewer`;
+export const LAST_KEY = `${TRACKING_PREFIX}last`;
+export const CONVERTED_KEY = `${TRACKING_PREFIX}converted`;
+export const CIDS_KEY = `${TRACKING_PREFIX}cids`;
 
 /** Page views closer together than this are one visit. A later one makes the viewer returning. */
 export const VISIT_GAP_MS = 30 * 60 * 1000;

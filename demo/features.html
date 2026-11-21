@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Keepwatch: chapters, seeking, captions, mini player</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 32px auto; padding: 0 16px; color: #111; line-height: 1.5; }
+    keep-watch { --kw-accent: #3b5bff; box-shadow: 0 20px 60px -20px rgba(0,0,0,.4); margin: 12px 0 24px; }
+    h2 { margin-top: 48px; }
+    code { background: #f1f1f4; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+    .filler { height: 120vh; margin: 32px 0; padding: 24px; border-radius: 16px; background: linear-gradient(#eef3ff, #fff); }
+    #log { font: 12px ui-monospace, monospace; white-space: pre-wrap; background: #f5f5f5; padding: 12px; border-radius: 8px; max-height: 240px; overflow: auto; }
+  </style>
+  <script src="../dist/keepwatch.js" defer></script>
+</head>
+<body>
+  <h1>Chapters, seeking, captions, mini player</h1>
+  <p>Run <code>bun run build</code>, serve the repository root (<code>bunx serve .</code>) and open <code>/demo/features.html</code>. Add <code>?src=/path/to/video.mp4</code> to try your own file in both players.</p>
+
+  <h2>1. Honest bar you can seek, inline chapters, two caption languages, mini player</h2>
+  <p><code>bar="linear"</code> makes the bar a slider: drag it, tap it, or focus it and use the arrow keys, Page Up/Down, Home and End. The chapter button next to the time opens the list. The captions button offers English and Dutch, and remembers the choice. Press play, then scroll down: the video follows in the bottom right corner.</p>
+  <keep-watch
+    id="one"
+    src="https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4"
+    video="demo-features-linear"
+    autoplay="none"
+    resume="off"
+    end="loop"
+    bar="linear"
+    chapters="0:00 Intro|0:03 Demo|0:07 Offer"
+    captions="en=captions.en.vtt nl=captions.nl.vtt"
+    captions-on
+    mini="bottom-right"
+    label="Big Buck Bunny, ten seconds"
+  ></keep-watch>
+
+  <div class="filler">
+    <h3>Scroll past the video</h3>
+    <p>While it plays with sound, the player floats in the corner. Its place above keeps its size, so this text does not jump. The arrow on the mini player scrolls back; the cross returns it and keeps it there for this page view.</p>
+  </div>
+
+  <h2>2. Rapid bar with chapter marks from a WebVTT file, one captions file</h2>
+  <p>The default bar runs ahead early and is never seekable. Its chapter marks sit where the curve puts each time, so the fill reaches a mark exactly when the chapter starts. Chapters come from <code>chapters.vtt</code>; the last cue there starts after the video ends and is ignored. With one captions file the button is a plain on/off switch.</p>
+  <keep-watch
+    id="two"
+    src="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
+    video="demo-features-rapid"
+    autoplay="none"
+    resume="off"
+    chapters="chapters.vtt"
+    captions="captions.en.vtt"
+    captions-lang="en"
+    mini="top-left"
+    mini-width="280"
+    mini-when="always"
+    label="Big Buck Bunny, test stream"
+  ></keep-watch>
+
+  <div class="filler">
+    <h3>More page</h3>
+    <p>The second player floats top left, 280 pixels wide, and also follows while paused (<code>mini-when="always"</code>).</p>
+  </div>
+
+  <h3>Events</h3>
+  <div id="log"></div>
+  <script>
+    // ?src=… swaps the video in both players, for trying a local file.
+    const src = new URLSearchParams(location.search).get("src");
+    if (src) for (const player of document.querySelectorAll("keep-watch")) player.setAttribute("src", src);
+    for (const name of ["play", "pause", "chapter", "seek", "captions", "mini", "ended", "error"]) {
+      document.addEventListener("keepwatch:" + name, (e) => {
+        const log = document.getElementById("log");
+        log.textContent += `${new Date().toLocaleTimeString()} ${e.target.id} ${name} ${JSON.stringify(e.detail)}\n`;
+        log.scrollTop = log.scrollHeight;
+      });
+    }
+  </script>
+</body>
+</html>

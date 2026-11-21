@@ -8,8 +8,9 @@
  *   restarts from 0:00 with sound, so nobody hears the pitch from the middle.
  * - A progress bar that runs fast early and slow late. A long video that
  *   looks a third done after the first minute loses fewer people.
- * - No seeking: the bar is a display, not a scrubber. Rewind 10s is the one
- *   way back, and it never moves `furthest`.
+ * - No seeking on that bar: it is a display, not a scrubber. Rewind 10s is
+ *   the one way back, and it never moves `furthest`. A page that wants a
+ *   scrubber asks for the linear bar (bar.ts), which shows the real position.
  * - Resume: a returning viewer continues where they left off.
  * - Timed CTA: the call to action appears when the offer starts, and stays
  *   for anyone who already reached that point.

@@ -11,3 +11,7 @@ export { STRINGS, type Lang } from "./i18n.ts";
 export { registerProvider, type MediaEvents, type MediaHandle, type MountOptions, type Provider, type ProviderMeta } from "./providers/index.ts";
 export * from "./sources.ts";
 export * from "./core.ts";
+export * from "./bar.ts";
+export * from "./chapters.ts";
+export * from "./vtt.ts";
+export * from "./mini.ts";

@@ -1,0 +1,19 @@
+WEBVTT
+
+NOTE Demo captions for demo/features.html. The cues repeat nothing from the video; they only show the overlay.
+
+00:00:00.500 --> 00:00:03.000
+This is the intro.
+Captions are drawn by the player itself.
+
+00:00:03.000 --> 00:00:07.000 line:85% align:center
+<v Narrator>Now the demo: <b>tags are stripped</b>, text stays text.</v>
+
+00:00:07.000 --> 00:00:10.000
+And this is the offer. &lt;b&gt;Not bold&lt;/b&gt;, on purpose.
+
+00:00:10.000 --> 00:00:20.000
+Scroll down: the video follows you in a corner.
+
+00:00:20.000 --> 00:01:00.000
+Use the chapter list to jump around.

@@ -31,7 +31,7 @@ Generated from `src/config.ts`. Config key → element attribute (or CSS propert
 
 | Key | Attribute | Default | What it does |
 |---|---|---|---|
-| `controls` | `controls` | `play rewind sound time speed fullscreen` | Buttons. Which buttons the control bar shows. Options: `play`, `rewind`, `sound`, `time`, `speed`, `fullscreen`. |
+| `controls` | `controls` | `play rewind sound time speed captions chapters fullscreen` | Buttons. Which buttons the control bar shows. Captions and chapters only show when the video has them. Options: `play`, `rewind`, `sound`, `time`, `speed`, `captions`, `chapters`, `fullscreen`. |
 | `noPause` | `no-pause` | `false` | Disable pausing. No pause button and no click-to-pause. Keeps viewers in the pitch; use with care. |
 | `smartPause` | `smart-pause` | `false` | Pause when hidden. Pause while the tab is hidden, play on when it comes back. |
 | `speed` | `speed` | `1` | Default speed. Playback speed at the start, e.g. 1.1. Vimeo needs a plan that allows speed. |
@@ -41,9 +41,28 @@ Generated from `src/config.ts`. Config key → element attribute (or CSS propert
 
 | Key | Attribute | Default | What it does |
 |---|---|---|---|
-| `bar` | `bar` | `rapid` | Style. Rapid makes a long video feel short and still ends exactly at the end. Never seekable. Options: `rapid`, `linear`, `none`. |
+| `bar` | `bar` | `rapid` | Style. Rapid makes a long video feel short and still ends exactly at the end; it is never seekable. Linear shows the real position and lets the viewer seek (see `seek`). Options: `rapid`, `linear`, `none`. |
+| `seek` | `seek` | `true` | Seek on the linear bar. With `bar="linear"` the viewer can drag, tap or use the arrow keys to move through the video. Off keeps the linear bar a display. The rapid bar never seeks. |
 | `barCurve` | `bar-curve` | `2.2` | Rapid strength. How far ahead the rapid bar runs. 1 is honest; 2.2 shows half the bar at 27% of the video. |
 | `barCurveMobile` | `bar-curve-mobile` |  | Rapid strength, phones. A different strength on touch screens. Empty: the same. |
+
+## Chapters & captions
+
+| Key | Attribute | Default | What it does |
+|---|---|---|---|
+| `chapters` | `chapters` |  | Chapters. A list (`0:00 Intro\|1:20 Demo\|2:40 Offer`) or the URL of a WebVTT chapters file. Adds marks on the bar, the current chapter's title and a chapter list. |
+| `captions` | `captions` |  | Captions file. URL of a WebVTT (.vtt) file. Several languages: `en=/captions/en.vtt nl=/captions/nl.vtt`. A file on another site must allow the request (CORS). |
+| `captionsLang` | `captions-lang` |  | Captions language. Language of the captions file, e.g. `en`. With several files: the one to start with. |
+| `captionsOn` | `captions-on` | `false` | Captions on at the start. Show captions before the viewer has chosen. Their own choice is remembered and wins. |
+
+## Mini player
+
+| Key | Attribute | Default | What it does |
+|---|---|---|---|
+| `mini` | `mini` |  | Float in a corner. When the viewer scrolls the video out of view it keeps playing in this corner; scrolling back or closing it returns it. The page keeps the player's space, so nothing jumps. Options: `""`, `bottom-right`, `bottom-left`, `top-right`, `top-left`. |
+| `miniWidth` | `mini-width` | `320` | Width. Width of the floating player in pixels (160 to 640). Phones use at most 60% of the screen; it is never taller than half the window. |
+| `miniWhen` | `mini-when` | `playing` | Float while. By default only a video that plays with sound follows the viewer. Options: `playing`, `always`. |
+| `miniClose` | `mini-close` | `true` | Close button. A close button on the floating player. Closing returns the player to its place for the rest of the page view. |
 
 ## Call to action
 

@@ -4,7 +4,11 @@ A VSL player for Vimeo, YouTube, Loom and plain video files (MP4, WebM, HLS), pl
 
 - **Muted autoplay:** starts muted behind a "This video has sound / Click to unmute" card, with no controls and no progress bar, so the preview never looks like minutes already missed. The click restarts the video from 0:00 with sound, so nobody hears the pitch from the middle. Optionally loops the first seconds (`preview-loop`).
 - **Player chrome:** play/pause, back 10 seconds, sound, an elapsed-time counter, a speed menu and full screen, in pill groups that fade out while the video plays. Lucide icons, no emoji.
-- **Fast progress bar:** runs ahead early and slows down later, so a long video feels short. It still ends exactly at the end. No seeking; back 10 seconds is the one way back.
+- **Fast progress bar:** runs ahead early and slows down later, so a long video feels short. It still ends exactly at the end. It is a display: no seeking, back 10 seconds is the one way back.
+- **Honest, seekable bar:** `bar="linear"` shows the real position and is a slider: drag it, tap it, or use the arrow keys, Page Up/Down, Home and End.
+- **Chapters:** `chapters="0:00 Intro|1:20 Demo|2:40 Offer"` (or a WebVTT file) puts marks on the bar, shows the current chapter next to the time and adds a chapter list to jump from.
+- **Captions:** a WebVTT file per language, drawn by the player itself, so they work over Vimeo and YouTube as well as over a file. A captions button; the viewer's choice is remembered.
+- **Mini player:** `mini="bottom-right"` keeps a playing video in a corner when the viewer scrolls past it. The page keeps the player's space, so nothing jumps.
 - **Resume:** returning viewers get "Continue watching (2:14)" or "Start over".
 - **Timed CTA:** your button appears when the offer starts (`cta-at="6:11"`), inside the player and anywhere on the page you mark with `data-keepwatch-gate`.
 - **A/B variants:** split traffic over several cuts; each viewer keeps theirs.
@@ -26,7 +30,9 @@ What you can tune:
 |---|---|
 | Autoplay | start mode, restart on unmute, preview loop, unmute copy (and a phone version), full screen on unmute |
 | Controls | which buttons show, disable pausing, smart pause, default speed, speed menu |
-| Progress bar | rapid (fast early, slow late), honest or hidden, rapid strength (and a phone strength) |
+| Progress bar | rapid (fast early, slow late), honest and seekable, or hidden; rapid strength (and a phone strength) |
+| Chapters & captions | chapters (a list or a WebVTT file), captions file(s), captions language, captions on at the start |
+| Mini player | which corner, width, float only while playing or also paused, close button |
 | Call to action | show at, hide at, text, link, new tab, exit CTA (on pause only), leave full screen for it, page gates |
 | Pause & end | pause image, end screen / end image / loop / count down and redirect |
 | Resume | ask, continue silently or always start over, and its copy |
@@ -87,8 +93,58 @@ Vimeo's speed control needs a Vimeo plan that allows it; without one the speed m
 | `unmute-title`, `unmute-text` | Unmute card copy | "This video has sound", "Click to unmute" per language |
 | `exit-poster` | Image behind the pause screen | the frozen frame |
 | `smart-pause` | Boolean: pause while the tab is hidden, play on when it is back | off |
+| `bar` | `rapid` (a display that runs ahead), `linear` (the real position, seekable), `none` | `rapid` |
+| `seek` | `false` keeps a `linear` bar a display. The rapid bar never seeks | on for `linear` |
+| `chapters` | `0:00 Intro\|1:20 Demo\|2:40 Offer`, or the URL of a WebVTT chapters file | none |
+| `captions` | URL of a WebVTT file, or several: `en=/c/en.vtt nl=/c/nl.vtt` | none |
+| `captions-lang` | Language of the captions file; with several, the one to start with | |
+| `captions-on` | Boolean: show captions before the viewer has chosen | off |
+| `mini` | `bottom-right`, `bottom-left`, `top-right`, `top-left`: float there when scrolled out of view | off |
+| `mini-width` | Width of the floating player in pixels, 160 to 640 | `320` |
+| `mini-when` | `playing` (only a video playing with sound floats) or `always` (also the muted preview and a paused video) | `playing` |
+| `mini-close` | `false` removes the close button | on |
 
 Reduced motion and Save-Data turn autoplay into a click-to-play poster.
+
+### Chapters and the seekable bar
+
+```html
+<keep-watch src="/video/demo.mp4" bar="linear" chapters="0:00 Intro|1:20 Demo|2:40 Offer"></keep-watch>
+<keep-watch src="https://vimeo.com/1226915932" chapters="/video/chapters.vtt"></keep-watch>
+```
+
+- A list is entries split by `|` (or new lines), each a time (`1:20`, `1:02:03`, `80`) and a title. A value without a space or `|` is read as the URL of a WebVTT file, where each cue is a chapter and its first line the title.
+- Entries that cannot be read are skipped, the rest are sorted, and chapters that start after the video ends are ignored. A broken list or a file that fails to load never stops the video.
+- The viewer gets a mark on the bar per chapter, the current title next to the time (in the bar's tooltip and its screen reader text too), and a chapter button that opens the list. The list works with a pointer, a finger and the keyboard (Tab, Enter, Escape).
+- Marks sit where the bar puts that time. On the default rapid bar that is on the curve, so the fill reaches a mark exactly when the chapter starts.
+- **Seeking is a property of the linear bar.** `bar="linear"` makes the bar a slider (`role="slider"`, value in seconds): click or drag with a pointer, drag with a finger, or focus it and use Left/Right (5 seconds), Page Up/Down (a tenth of the video), Home and End. `seek="false"` turns that off and keeps the bar a display. The rapid bar never seeks, because a place on a rapid bar is not that place in the video. The chapter list jumps on either bar.
+- A jump is not watching: the seconds skipped are not counted as watched. The furthest point reached does move with a forward jump, so the timed CTA appears for a viewer who seeks past `cta-at`.
+
+### Captions
+
+```html
+<keep-watch src="https://www.youtube.com/watch?v=…" captions="/captions/en.vtt" captions-lang="en"></keep-watch>
+<keep-watch src="/video/demo.mp4" captions="en=/captions/en.vtt nl=/captions/nl.vtt" captions-lang="nl" captions-on></keep-watch>
+```
+
+- One file: the captions button is an on/off switch. Several (`lang=url`, separated by spaces): the button opens a list with Off and each language, named in the player's language.
+- Captions are off until the viewer turns them on, unless the page sets `captions-on`. What the viewer chose (off, or a language) is kept in localStorage for every Keepwatch video on the site and wins over the page's default.
+- The player fetches and parses the file itself and shows cues by its own clock, in its own overlay. That is why captions work the same over a Vimeo or YouTube iframe as over a file. Loom has no clock to follow, so no captions there.
+- Only timings and text are used. `NOTE`, `STYLE` and `REGION` blocks, cue settings and cue tags (`<b>`, `<v Name>`, timestamps) are dropped, and cue text is put on the page as text, never as HTML.
+- A file on another origin must allow the request (CORS). A file that fails to load logs one console error; the video plays on.
+
+### Mini player
+
+```html
+<keep-watch src="…" mini="bottom-right" mini-width="320"></keep-watch>
+```
+
+- When the player is scrolled out of view while it plays with sound, it floats in the chosen corner. Scrolling back returns it; so does the close button, which keeps it in place for the rest of the page view. An arrow button scrolls the page back to the video.
+- The `<keep-watch>` element stays where it is, with the same box, and shows a note (over the dimmed poster, when there is one) while the player floats: the page does not jump. The video is the same player, moved by CSS only, so it never restarts and never plays twice.
+- `mini-when="always"` also floats the muted preview and a video that was paused in the page. With the default, a video paused inside the mini player stays there, so the play button does not disappear.
+- Phones get at most 60% of the screen width; a vertical video is never taller than half the window. The floating player shows play, sound and full screen; full screen brings the player home first.
+- Where the browser has the Popover API (current Chrome, Safari and Firefox) the floating player is in the top layer, so no `overflow`, `transform` or `z-index` on the page can clip or cover it. It also sits above the page's own dialogs. Elsewhere it is `position: fixed` with `--kw-mini-z`.
+- `prefers-reduced-motion` drops the slide-in. The element has `data-mini="<corner>"` while it floats, for page CSS.
 
 ### Styling
 
@@ -101,14 +157,31 @@ keep-watch {
   --kw-radius: 16px;
   --kw-font: inherit;
   --kw-aspect: 16 / 9;
+  --kw-captions-size: 20px;              /* default scales with the player */
+  --kw-captions-color: #fff;
+  --kw-captions-bg: rgba(0, 0, 0, .78);
+  --kw-mini-x: 16px;      /* the mini player's distance from the side of the window */
+  --kw-mini-y: 16px;      /* and from the top or bottom, e.g. to clear a chat button */
+  --kw-mini-radius: 12px;
+  --kw-mini-z: 2147483000; /* only where the browser has no top layer */
 }
 keep-watch::part(cta) { /* the CTA button */ }
+keep-watch::part(captions) { /* the captions overlay */ }
 ```
 
 ### Events
 
 Every event bubbles out of the element with `detail: { video, variant, time }`:
 `keepwatch:ready`, `keepwatch:play`, `keepwatch:unmute`, `keepwatch:pause`, `keepwatch:cta-shown`, `keepwatch:cta-click`, `keepwatch:ended`, `keepwatch:error`, and `keepwatch:progress` with `detail.percent` 25, 50, 75 and 90 (reached with sound on, once each per session).
+
+Four more events describe the viewer's use of the player. They are DOM events only; nothing new is sent to the collector:
+
+| Event | Extra `detail` | When |
+|---|---|---|
+| `keepwatch:chapter` | `index`, `title`, `start` | the chapter under the clock changed (playing on, or a jump) |
+| `keepwatch:seek` | `from`, `to` (seconds) | the viewer moved through the video with the bar or the chapter list |
+| `keepwatch:captions` | `on`, `lang` | the viewer turned captions on, off, or picked a language |
+| `keepwatch:mini` | `floating` | the player started or stopped floating |
 
 ```js
 document.addEventListener("keepwatch:cta-click", (e) => fbq("track", "Lead", e.detail));
@@ -183,7 +256,7 @@ bun run build     # dist/keepwatch.js (CDN), dist/index.js, dist/server.js, dist
 bunx serve .      # then open /demo
 ```
 
-`src/config.ts` is the settings list: every setting's key, attribute, default and help, which the builder form, `bun run embed`, the React props and SETTINGS.md are made from. Add a setting there first, then read its attribute in `src/element.ts` (a test fails if a listed attribute is never read). `src/core.ts` holds every rule as a pure, tested function; `src/sources.ts` recognises links; `src/providers/` holds one adapter per video host; `src/element.ts` is the player shell; `src/server.ts` is the collector contract. Change a rule in core, test it, then wire it. The demo has one player per provider.
+`src/config.ts` is the settings list: every setting's key, attribute, default and help, which the builder form, `bun run embed`, the React props and SETTINGS.md are made from. Add a setting there first, then read its attribute in `src/element.ts` (a test fails if a listed attribute is never read). `src/core.ts` holds every rule as a pure, tested function, with `src/bar.ts` (bar and seek maths), `src/chapters.ts`, `src/vtt.ts` (the WebVTT parser) and `src/mini.ts` (when the player floats) beside it; `src/ui/` holds the parts that wire those to the DOM (the rail, the captions overlay, the floating frame); `src/sources.ts` recognises links; `src/providers/` holds one adapter per video host; `src/element.ts` is the player shell; `src/server.ts` is the collector contract. Change a rule in core, test it, then wire it. The demo has one player per provider; `demo/features.html` shows chapters, seeking, captions and the mini player.
 
 Icons are [Lucide](https://lucide.dev) paths (ISC licence), inlined in `src/icons.ts`.
 

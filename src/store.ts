@@ -39,6 +39,38 @@ export function save(video: string, patch: Partial<Saved>): Saved {
   return next;
 }
 
+/**
+ * What the viewer chose for every video on this site, not one video: today
+ * only captions ("off", or the language they picked). Guarded like the rest.
+ */
+export type Prefs = { captions?: string };
+
+/** A dot, where video keys use a colon and a slug: no video id can collide with it. */
+const PREFS_KEY = "keepwatch.prefs";
+
+export function loadPrefs(): Prefs {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "null");
+    if (raw && typeof raw === "object") {
+      const captions = (raw as Record<string, unknown>).captions;
+      return typeof captions === "string" && captions.length <= 20 ? { captions } : {};
+    }
+  } catch {
+    // Blocked or corrupt: no preferences.
+  }
+  return {};
+}
+
+export function savePrefs(patch: Prefs): Prefs {
+  const next = { ...loadPrefs(), ...patch };
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(next));
+  } catch {
+    // Storage blocked: the choice holds for this page view.
+  }
+  return next;
+}
+
 /** Hide `[data-keepwatch-gate]` elements until a player unlocks. Idempotent. */
 export function installGateStyle(): void {
   if (typeof document === "undefined" || document.getElementById("keepwatch-gates")) return;

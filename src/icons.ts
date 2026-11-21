@@ -2,7 +2,8 @@
  * Player icons: Lucide (https://lucide.dev, ISC licence) paths, inlined so
  * the player has no icon dependency. `rewind10` adds the "10" to Lucide's
  * rotate-ccw; `speaker` is volume-2 with a filled body and waves the CSS
- * animates (.wave1, .wave2) for the unmute card.
+ * animates (.wave1, .wave2) for the unmute card; `restore` is Lucide's
+ * arrow-up-left, the mini player's "back to the video".
  */
 const SPEAKER_BODY =
   "M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z";
@@ -17,6 +18,10 @@ const PATHS = {
   maximize: `<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>`,
   minimize: `<path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/>`,
   check: `<path d="M20 6 9 17l-5-5"/>`,
+  captions: `<rect width="18" height="14" x="3" y="5" rx="2" ry="2"/><path d="M7 15h4M15 15h2M7 11h2M13 11h4"/>`,
+  list: `<path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/>`,
+  x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
+  restore: `<path d="M7 17V7h10"/><path d="M17 17 7 7"/>`,
   speaker: `<path d="${SPEAKER_BODY}" fill="currentColor"/><path class="wave1" d="M16 9a5 5 0 0 1 0 6"/><path class="wave2" d="M19.364 18.364a9 9 0 0 0 0-12.728"/>`,
 } as const;
 

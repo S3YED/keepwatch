@@ -2,15 +2,20 @@
  * Keepwatch without a DOM: the beat contract for collectors and dashboards,
  * and the config tools (validateConfig, embedCode) for builders and agents.
  * Validate with `parseBeat`, store with `mergeBeat`, chart with `summarise`.
+ * Sales: `parseConversion`, stored once per `conversionKey`.
  * `parseSource` and `plainUrl` are here too, for server-rendered fallback embeds.
  */
 export {
   BEAT_MAX_BYTES,
+  CONVERSION_MAX_BYTES,
+  conversionKey,
   mergeBeat,
   mmss,
   parseBeat,
+  parseConversion,
   summarise,
   type Beat,
+  type Conversion,
   type Stats,
   type ViewMeasures,
 } from "./core.ts";

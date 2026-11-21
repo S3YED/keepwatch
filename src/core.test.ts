@@ -127,6 +127,26 @@ test("a malformed beat is refused, not thrown", () => {
   expect(JSON.stringify({ ...beat, utmCampaign: "x".repeat(120) }).length).toBeLessThan(BEAT_MAX_BYTES);
 });
 
+test("viewer id and returning flag are optional, so older players still report", () => {
+  const old = parseBeat(beat);
+  expect(old).not.toBeNull();
+  expect(old?.viewer).toBeUndefined();
+  expect(old?.returning).toBeUndefined();
+  const viewer = "v".repeat(32);
+  const b = parseBeat({ ...beat, viewer, returning: true });
+  expect(b?.viewer).toBe(viewer);
+  expect(b?.returning).toBe(true);
+  expect(parseBeat({ ...beat, viewer })?.returning).toBe(false);
+  // A malformed id is dropped, never stored; the view itself still counts.
+  for (const bad of ["short", "me@example.com", 42, "x".repeat(65)]) {
+    const r = parseBeat({ ...beat, viewer: bad, returning: true });
+    expect(r?.sid).toBe(beat.sid);
+    expect(r?.viewer).toBeUndefined();
+    expect(r?.returning).toBeUndefined();
+  }
+  expect(JSON.stringify({ ...beat, viewer, returning: true, utmCampaign: "x".repeat(120) }).length).toBeLessThan(BEAT_MAX_BYTES);
+});
+
 test("merging never undoes progress", () => {
   const b = parseBeat(beat)!;
   const first = mergeBeat(null, { ...b, ctaShown: true });

@@ -130,6 +130,13 @@ export type Beat = {
   ctaClicked: boolean;
   completed: boolean;
   mobile: boolean;
+  /**
+   * The browser's anonymous viewer id: random, first-party, kept in
+   * localStorage. Optional, so beats from older players still parse.
+   */
+  viewer?: string;
+  /** This viewer had an earlier visit (see `VISIT_GAP_MS` in viewer.ts). */
+  returning?: boolean;
   utmSource?: string;
   utmMedium?: string;
   utmCampaign?: string;
@@ -187,6 +194,8 @@ export function parseBeat(raw: unknown): Beat | null {
   const watchedSec = sec(r.watchedSec);
   if (durationSec === null || furthestSec === null || watchedSec === null) return null;
   const flag = (k: string) => r[k] === true;
+  // Optional and checked like `sid`: a malformed viewer id is dropped, not stored.
+  const viewer = str("viewer", SID) ?? undefined;
   return {
     sid,
     site,
@@ -203,11 +212,113 @@ export function parseBeat(raw: unknown): Beat | null {
     ctaClicked: flag("ctaClicked"),
     completed: flag("completed"),
     mobile: flag("mobile"),
+    viewer,
+    returning: viewer ? flag("returning") : undefined,
     utmSource: utm(r.utmSource),
     utmMedium: utm(r.utmMedium),
     utmCampaign: utm(r.utmCampaign),
     utmContent: utm(r.utmContent),
   };
+}
+
+/**
+ * A sale, sent by `keepwatch.convert()` on a thank-you page, credited to
+ * the viewer and to the last video and variant they watched in this browser.
+ * Its own message on the same `collect` endpoint, told apart by `kind`.
+ */
+export type Conversion = {
+  kind: "conversion";
+  /** Random per convert call, so a retried send is stored once. */
+  cid: string;
+  site: string;
+  viewer: string;
+  returning: boolean;
+  /** Absent when this browser never started a Keepwatch video. */
+  video?: string;
+  variant?: string;
+  /** In the currency's major unit (497.5 = 497.50), at most two decimals. */
+  value: number;
+  /** ISO 4217, upper case: "EUR", "USD". */
+  currency: string;
+  /** The shop's order id. A collector stores each one once per site. */
+  orderId?: string;
+};
+
+export const CONVERSION_MAX_BYTES = 1024;
+/** Above any single order a VSL funnel takes, so a typo cannot skew revenue. */
+export const MAX_VALUE = 10_000_000;
+const CURRENCY = /^[A-Z]{3}$/;
+/** Letters, digits and `. _ : # / -`. No `@` or spaces, so an email address cannot be an order id. */
+const ORDER_ID = /^[A-Za-z0-9._:#/-]{1,64}$/;
+
+/** A sale value as stored: finite, 0 to MAX_VALUE, rounded to cents. Null otherwise. */
+export function money(value: unknown): number | null {
+  const n = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 0 || n > MAX_VALUE) return null;
+  return Math.round(n * 100) / 100;
+}
+
+export function currencyCode(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const c = value.trim().toUpperCase();
+  return CURRENCY.test(c) ? c : null;
+}
+
+export function orderId(value: unknown): string | null {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return String(value);
+  if (typeof value !== "string") return null;
+  const s = value.trim();
+  return ORDER_ID.test(s) ? s : null;
+}
+
+/**
+ * Validate a conversion. Strict where `parseBeat` is lenient: a sale with a
+ * malformed field is refused whole, because a wrong number in revenue is
+ * worse than a missing one. `video` and `variant` come as a pair or not at all.
+ */
+export function parseConversion(raw: unknown): Conversion | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  if (r.kind !== "conversion") return null;
+  const str = (k: string, re: RegExp) => (typeof r[k] === "string" && re.test(r[k] as string) ? (r[k] as string) : null);
+  const cid = str("cid", SID);
+  const site = str("site", HOST);
+  const viewer = str("viewer", SID);
+  if (!cid || !site || !viewer) return null;
+  const hasVideo = r.video !== undefined || r.variant !== undefined;
+  const video = str("video", SLUG);
+  const variant = str("variant", SLUG);
+  if (hasVideo && (!video || !variant)) return null;
+  const value = money(r.value);
+  const currency = currencyCode(r.currency);
+  if (value === null || currency === null || typeof r.value !== "number") return null;
+  let order: string | undefined;
+  if (r.orderId !== undefined) {
+    const o = orderId(r.orderId);
+    if (o === null) return null;
+    order = o;
+  }
+  if (r.returning !== undefined && typeof r.returning !== "boolean") return null;
+  return {
+    kind: "conversion",
+    cid,
+    site,
+    viewer,
+    returning: r.returning === true,
+    ...(video && variant ? { video, variant } : {}),
+    value,
+    currency,
+    ...(order ? { orderId: order } : {}),
+  };
+}
+
+/**
+ * The key a collector stores a conversion under, unique per row: the order
+ * id per site when there is one (a reloaded thank-you page or a second
+ * device sending the same order counts once), otherwise the send's `cid`.
+ */
+export function conversionKey(c: Pick<Conversion, "site" | "cid" | "orderId">): string {
+  return c.orderId ? `order:${c.site}:${c.orderId}` : `cid:${c.cid}`;
 }
 
 /** A stored row's measures, as far as merging and charting are concerned. */

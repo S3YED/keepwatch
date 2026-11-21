@@ -19,6 +19,7 @@ import type { MediaHandle, Provider } from "./providers/types.ts";
 import { plainUrl, providerName, sourceKey } from "./sources.ts";
 import { claimAudio, installGateStyle, load, onAudioClaimed, save, unlockGates } from "./store.ts";
 import { CSS } from "./styles.ts";
+import { browserStore, defineConvert, randomId, rememberWatched, viewer } from "./viewer.ts";
 
 /**
  * <keep-watch>: a VSL player over Vimeo, YouTube, Loom or a
@@ -60,6 +61,7 @@ import { CSS } from "./styles.ts";
  *   keepwatch:play, keepwatch:unmute, keepwatch:pause, keepwatch:cta-shown,
  *   keepwatch:cta-click, keepwatch:ended, keepwatch:error, and keepwatch:progress
  *   (detail.percent 25, 50, 75, 90) for pixels and tag managers. Seconds count with sound on only.
+ *   Every field and trigger, and the conversion call for thank-you pages: docs/EVENTS.md.
  *
  * Until it starts, the frame is a poster and no provider player exists.
  */
@@ -89,11 +91,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-function sessionId(): string {
-  const bytes = new Uint8Array(18);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(36).padStart(2, "0")).join("").slice(0, 32);
-}
+const sessionId = randomId;
 
 function prefersNoAutoplay(): boolean {
   const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -527,6 +525,15 @@ export class KeepWatchElement extends HTMLElement {
     const first = !s.started;
     if (first) {
       s.started = true;
+      // The video a later conversion on this site is credited to.
+      if (this.variant) {
+        rememberWatched(browserStore(), {
+          video: this.video,
+          variant: this.variant.id,
+          collect: this.getAttribute("collect") || undefined,
+          at: Date.now(),
+        });
+      }
       this.beat();
       const speed = Number(this.getAttribute("speed"));
       if (speed > 0 && speed !== 1 && this.controllable) {
@@ -1037,6 +1044,7 @@ export class KeepWatchElement extends HTMLElement {
     const v = this.variant;
     const s = this.s;
     if (!endpoint || !v || !s.started) return;
+    const who = viewer();
     const body: Beat = {
       sid: s.sid,
       site: location.hostname.toLowerCase(),
@@ -1053,6 +1061,8 @@ export class KeepWatchElement extends HTMLElement {
       ctaClicked: s.ctaClicked,
       completed: s.completed,
       mobile: window.matchMedia?.("(pointer: coarse)").matches ?? false,
+      viewer: who.id,
+      returning: who.returning,
       ...readUtm(location.search),
     };
     const json = JSON.stringify(body);
@@ -1073,4 +1083,5 @@ export function define(tag = "keep-watch"): void {
   if (typeof customElements !== "undefined" && !customElements.get(tag)) {
     customElements.define(tag, KeepWatchElement);
   }
+  defineConvert();
 }

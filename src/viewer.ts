@@ -18,6 +18,7 @@ export type KV = Pick<Storage, "getItem" | "setItem">;
 const VIEWER_KEY = "keepwatch:viewer";
 const LAST_KEY = "keepwatch:last";
 const CONVERTED_KEY = "keepwatch:converted";
+const CIDS_KEY = "keepwatch:cids";
 
 /** Page views closer together than this are one visit. A later one makes the viewer returning. */
 export const VISIT_GAP_MS = 30 * 60 * 1000;
@@ -26,6 +27,8 @@ export const CONVERTED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /**
  * Without an order id, the same sale on the same page counts once within this
  * window only (a reload), so a second purchase the next day still counts.
+ * The tradeoff: a thank-you page reloaded after the window counts again.
+ * Pass an order id to dedupe for good.
  */
 export const UNNAMED_TTL_MS = 30 * 60 * 1000;
 const CONVERTED_MAX = 50;
@@ -136,6 +139,10 @@ type Sent = { k: string; at: number };
 
 /** Conversions sent from this page, so a double call counts once even without storage. */
 const sentHere = new Set<string>();
+/** Conversions being sent right now, so two overlapping calls send once. Released when the send ends. */
+const inFlight = new Set<string>();
+/** Send ids per dedupe key for this page, for when storage is blocked. */
+const cidsHere = new Map<string, { cid: string; at: number }>();
 
 const ttlOf = (key: string) => (key.startsWith("order:") ? CONVERTED_TTL_MS : UNNAMED_TTL_MS);
 
@@ -159,9 +166,36 @@ export function recordSent(store: KV | null, key: string, now: number): void {
   write(store, CONVERTED_KEY, [...sentList(store, now).filter((e) => e.k !== key), { k: key, at: now }].slice(-CONVERTED_MAX));
 }
 
+type CidEntry = { k: string; cid: string; at: number };
+
+/**
+ * The send id for a dedupe key: the same one for every attempt inside the
+ * key's window (a retry after a failed send, another tab), so a collector
+ * that did get an earlier attempt stores the sale once. A new one after
+ * the window, when the sale may be a new purchase.
+ */
+export function cidFor(store: KV | null, key: string, now: number, fresh: string): string {
+  const live = (e: { at: number }) => now - e.at < ttlOf(key);
+  const saved = read(store, CIDS_KEY);
+  const list = Array.isArray(saved)
+    ? (saved as Partial<CidEntry>[]).filter(
+        (e): e is CidEntry =>
+          !!e && typeof e.k === "string" && typeof e.cid === "string" && RANDOM_ID.test(e.cid) && typeof e.at === "number" && now - e.at < ttlOf(e.k),
+      )
+    : [];
+  const here = cidsHere.get(key);
+  const found = list.find((e) => e.k === key) ?? (here && live(here) ? { k: key, ...here } : undefined);
+  if (found) return found.cid;
+  cidsHere.set(key, { cid: fresh, at: now });
+  write(store, CIDS_KEY, [...list, { k: key, cid: fresh, at: now }].slice(-CONVERTED_MAX));
+  return fresh;
+}
+
 /** For tests: forget the in-page memory of sent conversions and of this page's viewer. */
 export function resetPageState(): void {
   sentHere.clear();
+  inFlight.clear();
+  cidsHere.clear();
   current = null;
 }
 
@@ -202,6 +236,7 @@ export type ConvertContext = {
   site: string;
   path: string;
   now: number;
+  /** A fresh send id, used unless this key already has one inside its window (`cidFor`). */
   cid: string;
   /** Injected for tests; defaults to the browser's SubtleCrypto. */
   subtle?: SubtleCrypto | null;
@@ -234,7 +269,7 @@ export async function prepareConversion(input: ConvertInput, ctx: ConvertContext
   if (alreadySent(ctx.store, key, ctx.now)) return { ok: false, reason: "already sent" };
   const body: Conversion = {
     kind: "conversion",
-    cid: ctx.cid,
+    cid: cidFor(ctx.store, key, ctx.now, ctx.cid),
     site: ctx.site,
     viewer: ctx.viewer.id,
     returning: ctx.viewer.returning,
@@ -250,9 +285,17 @@ export async function prepareConversion(input: ConvertInput, ctx: ConvertContext
 export async function sendConversion(input: ConvertInput, ctx: ConvertContext, transport: Transport): Promise<Prepared & { sent?: boolean }> {
   const result = await prepareConversion(input, ctx);
   if (!result.ok) return result;
-  const sent = await transport(result.endpoint, JSON.stringify(result.body));
-  if (sent) recordSent(ctx.store, result.key, ctx.now);
-  return { ...result, sent };
+  // Synchronous from here to the transport call, so an overlapping call
+  // (which also awaited the hash) sees this one in flight or already sent.
+  if (inFlight.has(result.key) || alreadySent(ctx.store, result.key, ctx.now)) return { ok: false, reason: "already sent" };
+  inFlight.add(result.key);
+  try {
+    const sent = await transport(result.endpoint, JSON.stringify(result.body));
+    if (sent) recordSent(ctx.store, result.key, ctx.now);
+    return { ...result, sent };
+  } finally {
+    inFlight.delete(result.key);
+  }
 }
 
 /**

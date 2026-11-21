@@ -172,6 +172,47 @@ test("a failed send is not remembered, so a reload retries it", async () => {
   expect((await sendConversion(input, ctx(store), ok)).ok).toBe(false);
 });
 
+test("two overlapping calls send once; a failed one releases the key for a retry", async () => {
+  for (const store of [memory(), null]) {
+    resetPageState();
+    const sends: string[] = [];
+    let release!: (v: boolean) => void;
+    const slow: Transport = (_e, json) => {
+      sends.push(json);
+      return new Promise((r) => (release = r));
+    };
+    for (const input of [
+      { value: 97, currency: "USD", collect: COLLECT },
+      { value: 497, currency: "EUR", id: "1042", collect: COLLECT },
+    ]) {
+      sends.length = 0;
+      const a = sendConversion(input, ctx(store), slow);
+      const b = sendConversion(input, ctx(store, { cid: "c".repeat(32) }), slow);
+      expect(await b).toEqual({ ok: false, reason: "already sent" });
+      release(false); // the first send fails
+      const first = await a;
+      expect(first.ok && first.sent).toBe(false);
+      expect(sends.length).toBe(1);
+      const retry = await sendConversion(input, ctx(store, { cid: "d".repeat(32) }), ok);
+      expect(retry.ok && retry.sent).toBe(true);
+    }
+  }
+});
+
+test("without an order id, every attempt inside the window carries the same cid; after it, a new one", async () => {
+  const store = memory();
+  const input = { value: 97, currency: "USD", collect: COLLECT };
+  const down: Transport = async () => false;
+  const first = await sendConversion(input, ctx(store, { cid: "c".repeat(32) }), down);
+  resetPageState(); // another page load (or tab): only storage remembers
+  const retry = await sendConversion(input, ctx(store, { cid: "d".repeat(32), now: 1_000 + UNNAMED_TTL_MS - 1 }), ok);
+  expect(first.ok && first.body.cid).toBe("c".repeat(32));
+  expect(retry.ok && retry.body.cid).toBe("c".repeat(32));
+  resetPageState();
+  const later = await sendConversion(input, ctx(store, { cid: "e".repeat(32), now: 1_000 + 2 * UNNAMED_TTL_MS }), ok);
+  expect(later.ok && later.sent && later.body.cid).toBe("e".repeat(32));
+});
+
 test("missing storage: convert still sends, unattributed, and dedupes within the page", async () => {
   for (const store of [blocked, null]) {
     resetPageState();

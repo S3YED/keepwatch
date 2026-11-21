@@ -21,7 +21,7 @@ import { claimAudio, installGateStyle, load, onAudioClaimed, save, unlockGates }
 import { CSS } from "./styles.ts";
 
 /**
- * <keep-watch>: a Vidalytics-style player over Vimeo, YouTube, Loom or a
+ * <keep-watch>: a VSL player over Vimeo, YouTube, Loom or a
  * video file.
  *
  *   <keep-watch src="https://vimeo.com/1226915932" cta-at="6:11"
@@ -49,7 +49,7 @@ import { CSS } from "./styles.ts";
  *   bar-curve   How far ahead the bar runs. 1 is honest, 2.2 default, higher is faster early.
  *   speeds      Speeds in the settings menu, e.g. "1 1.25 1.5 2". Default "0.75 1 1.25 1.5 2"; "" hides it.
  *   preview-loop  Loop the muted preview over its first N seconds ("10"). Default: the whole video.
- *   unmute-title  Unmute card headline. Default per language ("Your video is playing").
+ *   unmute-title  Unmute card headline. Default per language ("This video has sound").
  *   unmute-text   Unmute card line. Default per language ("Click to unmute").
  *   exit-poster   Image shown behind the pause screen, instead of the frozen frame.
  *   smart-pause   Boolean. Pause when the tab is hidden, play on when it comes back.

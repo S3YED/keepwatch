@@ -2,7 +2,7 @@
 export const STRINGS = {
   en: {
     play: "Play the video",
-    started: "Your video is playing",
+    started: "This video has sound",
     unmute: "Click to unmute",
     resumeTitle: "You already started this video",
     resumeContinue: "Continue watching",
@@ -29,7 +29,7 @@ export const STRINGS = {
   },
   nl: {
     play: "Speel de video af",
-    started: "Je video speelt af",
+    started: "Deze video heeft geluid",
     unmute: "Klik voor geluid",
     resumeTitle: "Je bent deze video al begonnen",
     resumeContinue: "Verder kijken",
@@ -56,7 +56,7 @@ export const STRINGS = {
   },
   ru: {
     play: "Смотреть видео",
-    started: "Видео уже идёт",
+    started: "У этого видео есть звук",
     unmute: "Нажмите, чтобы включить звук",
     resumeTitle: "Вы уже начали смотреть это видео",
     resumeContinue: "Продолжить просмотр",

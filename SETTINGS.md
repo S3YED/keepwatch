@@ -33,7 +33,7 @@ Generated from `src/config.ts`. Config key → element attribute (or CSS propert
 |---|---|---|---|
 | `controls` | `controls` | `play rewind sound time speed fullscreen` | Buttons. Which buttons the control bar shows. Options: `play`, `rewind`, `sound`, `time`, `speed`, `fullscreen`. |
 | `noPause` | `no-pause` | `false` | Disable pausing. No pause button and no click-to-pause. Keeps viewers in the pitch; use with care. |
-| `smartPause` | `smart-pause` | `false` | Smart pause. Pause while the tab is hidden, play on when it comes back. |
+| `smartPause` | `smart-pause` | `false` | Pause when hidden. Pause while the tab is hidden, play on when it comes back. |
 | `speed` | `speed` | `1` | Default speed. Playback speed at the start, e.g. 1.1. Vimeo needs a plan that allows speed. |
 | `speeds` | `speeds` | `0.75 1 1.25 1.5 2` | Speed menu. Speeds offered in the menu, space-separated. Empty hides the menu. |
 

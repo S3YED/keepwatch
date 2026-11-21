@@ -1,14 +1,14 @@
 # Keepwatch
 
-A Vidalytics-style VSL player for Vimeo, YouTube, Loom and plain video files (MP4, WebM, HLS), plus the watch analytics behind it. One script tag, one HTML tag, and it works on any site: plain HTML, Webflow, WordPress, GoHighLevel, Next.js.
+A VSL player for Vimeo, YouTube, Loom and plain video files (MP4, WebM, HLS), plus the watch analytics behind it. One script tag, one HTML tag, and it works on any site: plain HTML, Webflow, WordPress, GoHighLevel, Next.js.
 
-- **Smart autoplay:** starts muted behind a "Your video is playing / Click to unmute" card, with no controls and no progress bar, so the preview never looks like minutes already missed. The click restarts the video from 0:00 with sound, so nobody hears the pitch from the middle. Optionally loops the first seconds (`preview-loop`).
+- **Muted autoplay:** starts muted behind a "This video has sound / Click to unmute" card, with no controls and no progress bar, so the preview never looks like minutes already missed. The click restarts the video from 0:00 with sound, so nobody hears the pitch from the middle. Optionally loops the first seconds (`preview-loop`).
 - **Player chrome:** play/pause, back 10 seconds, sound, an elapsed-time counter, a speed menu and full screen, in pill groups that fade out while the video plays. Lucide icons, no emoji.
 - **Fast progress bar:** runs ahead early and slows down later, so a long video feels short. It still ends exactly at the end. No seeking; back 10 seconds is the one way back.
 - **Resume:** returning viewers get "Continue watching (2:14)" or "Start over".
 - **Timed CTA:** your button appears when the offer starts (`cta-at="6:11"`), inside the player and anywhere on the page you mark with `data-keepwatch-gate`.
 - **A/B variants:** split traffic over several cuts; each viewer keeps theirs.
-- **Smart pause and exit poster:** pause when the tab is hidden and play on when it returns (`smart-pause`); show an image behind the pause screen (`exit-poster`).
+- **Pause when hidden and exit poster:** pause when the tab is hidden and play on when it returns (`smart-pause`); show an image behind the pause screen (`exit-poster`).
 - **Analytics:** one row per viewing session (views, plays with sound, unmute rate, drop-off curve, CTA reached and clicked, finishes), sent to a collector you choose. No cookies, no IP, no personal data.
 - English, Dutch and Russian built in; restyle with CSS custom properties.
 
@@ -20,7 +20,7 @@ Three ways to the same embed code, all driven by one settings list (`src/config.
 - **Config file (for agents):** write a `keepwatch.config.json` (see `examples/clark-vsl.config.json`), then `bun run embed keepwatch.config.json` prints the embed. `--inline` puts the player inside the snippet, `--script <url>` points at your own copy, `--page out.html` writes a test page. A bad config prints every problem and exits 1.
 - **Code:** `import { validateConfig, embedCode } from "keepwatch/server"`, or pass the same keys as props to `<Keepwatch />` in React.
 
-What you can tune, following Vidalytics' own settings:
+What you can tune:
 
 | Area | Settings |
 |---|---|
@@ -84,7 +84,7 @@ Vimeo's speed control needs a Vimeo plan that allows it; without one the speed m
 | `bar-curve` | How far ahead the bar runs. `1` is honest | `2.2` |
 | `speeds` | Speed menu, e.g. `1 1.25 1.5 2`; empty hides it | `0.75 1 1.25 1.5 2` |
 | `preview-loop` | Loop the muted preview over its first seconds, e.g. `10` | the whole video |
-| `unmute-title`, `unmute-text` | Unmute card copy | "Your video is playing", "Click to unmute" per language |
+| `unmute-title`, `unmute-text` | Unmute card copy | "This video has sound", "Click to unmute" per language |
 | `exit-poster` | Image behind the pause screen | the frozen frame |
 | `smart-pause` | Boolean: pause while the tab is hidden, play on when it is back | off |
 

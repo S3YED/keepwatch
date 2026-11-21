@@ -57,7 +57,7 @@ export const FIELDS = [
   f({ key: "autoplay", attr: "autoplay", group: "Autoplay", label: "Start", type: "select", default: "load", options: [{ value: "load", label: "Muted, on page load" }, { value: "inview", label: "Muted, when half on screen" }, { value: "click", label: "With sound, at once (after a click)" }, { value: "none", label: "Thumbnail and play button" }], help: "Muted autoplay is the only autoplay browsers allow; the unmute card turns it into a play." }),
   f({ key: "unmuteRestart", attr: "unmute-restart", group: "Autoplay", label: "Restart on unmute", type: "boolean", default: true, help: "Clicking the unmute card starts the video over from 0:00, so nobody hears the pitch from the middle." }),
   f({ key: "previewLoop", attr: "preview-loop", group: "Autoplay", label: "Loop preview after", type: "time", placeholder: "0:10", help: "Loop the muted preview over its first seconds. Empty: the whole video." }),
-  f({ key: "unmuteTitle", attr: "unmute-title", group: "Autoplay", label: "Unmute headline", type: "text", placeholder: "Your video is playing", help: "Top line of the unmute card." }),
+  f({ key: "unmuteTitle", attr: "unmute-title", group: "Autoplay", label: "Unmute headline", type: "text", placeholder: "This video has sound", help: "Top line of the unmute card." }),
   f({ key: "unmuteText", attr: "unmute-text", group: "Autoplay", label: "Unmute line", type: "text", placeholder: "Click to unmute", help: "Second line of the unmute card." }),
   f({ key: "unmuteTitleMobile", attr: "unmute-title-mobile", group: "Autoplay", label: "Unmute headline, phones", type: "text", help: "Replaces the headline on touch screens." }),
   f({ key: "unmuteTextMobile", attr: "unmute-text-mobile", group: "Autoplay", label: "Unmute line, phones", type: "text", placeholder: "Tap to unmute", help: "Replaces the second line on touch screens." }),
@@ -66,7 +66,7 @@ export const FIELDS = [
   // Controls
   f({ key: "controls", attr: "controls", group: "Controls", label: "Buttons", type: "list", default: "play rewind sound time speed fullscreen", options: [{ value: "play", label: "Play/pause" }, { value: "rewind", label: "Back 10s" }, { value: "sound", label: "Sound" }, { value: "time", label: "Time" }, { value: "speed", label: "Speed" }, { value: "fullscreen", label: "Full screen" }], help: "Which buttons the control bar shows." }),
   f({ key: "noPause", attr: "no-pause", group: "Controls", label: "Disable pausing", type: "boolean", default: false, help: "No pause button and no click-to-pause. Keeps viewers in the pitch; use with care." }),
-  f({ key: "smartPause", attr: "smart-pause", group: "Controls", label: "Smart pause", type: "boolean", default: false, help: "Pause while the tab is hidden, play on when it comes back." }),
+  f({ key: "smartPause", attr: "smart-pause", group: "Controls", label: "Pause when hidden", type: "boolean", default: false, help: "Pause while the tab is hidden, play on when it comes back." }),
   f({ key: "speed", attr: "speed", group: "Controls", label: "Default speed", type: "number", default: 1, help: "Playback speed at the start, e.g. 1.1. Vimeo needs a plan that allows speed." }),
   f({ key: "speeds", attr: "speeds", group: "Controls", label: "Speed menu", type: "text", default: "0.75 1 1.25 1.5 2", help: "Speeds offered in the menu, space-separated. Empty hides the menu." }),
 

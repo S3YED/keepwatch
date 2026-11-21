@@ -84,7 +84,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid #fff; outline-offset:
 }
 .btn.ghost { background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.5); }
 
-/* Controls: three pill groups over a thin rail, like Vidalytics. */
+/* Controls: three pill groups over a thin rail, as on a sales page. */
 .chrome {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
   padding: 28px clamp(8px, 2cqi, 20px) clamp(20px, 3.4cqi, 34px);

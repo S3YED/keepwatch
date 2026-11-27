@@ -57,7 +57,7 @@ test("chapters, captions, seek and the mini player in a config", () => {
   const { attrs } = configToAttributes({
     src: "/video/vsl.mp4",
     bar: "linear",
-    seek: false,
+    seek: true,
     chapters: "0:00 Intro|1:20 Demo",
     captions: "en=/c/en.vtt nl=/c/nl.vtt",
     captionsLang: "nl",
@@ -70,7 +70,7 @@ test("chapters, captions, seek and the mini player in a config", () => {
   expect(attrs).toEqual([
     ["src", "/video/vsl.mp4"],
     ["bar", "linear"],
-    ["seek", "false"],
+    ["seek", ""],
     ["chapters", "0:00 Intro|1:20 Demo"],
     ["captions", "en=/c/en.vtt nl=/c/nl.vtt"],
     ["captions-lang", "nl"],
@@ -79,7 +79,7 @@ test("chapters, captions, seek and the mini player in a config", () => {
     ["mini-close", "false"],
   ]);
   // A config that sets none of them adds no attribute.
-  expect(configToAttributes({ src: "/video/vsl.mp4", seek: true, mini: "", miniClose: true, captionsOn: false }).attrs).toEqual([["src", "/video/vsl.mp4"]]);
+  expect(configToAttributes({ src: "/video/vsl.mp4", bar: "rapid", seek: false, mini: "", miniClose: true, captionsOn: false }).attrs).toEqual([["src", "/video/vsl.mp4"]]);
 
   const { config, issues } = validateConfig({
     src: "/video/vsl.mp4",

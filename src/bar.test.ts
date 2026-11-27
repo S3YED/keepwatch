@@ -30,14 +30,19 @@ test("the linear bar shows the real position; the rapid bar keeps its curve", ()
   expect(barPosition(233, 466, "rapid")).toBeGreaterThan(0.75);
 });
 
-test("only the linear bar seeks, and a page can switch that off", () => {
-  expect(canSeek("linear", null)).toBe(true);
+test("no bar seeks unless the page asks: a linear bar with `seek`", () => {
+  // The default, on every bar: a display.
+  expect(canSeek("linear", null)).toBe(false);
+  expect(canSeek("rapid", null)).toBe(false);
+  expect(canSeek("none", null)).toBe(false);
+  // A bare `seek` or seek="true" on a linear bar turns it on.
   expect(canSeek("linear", "")).toBe(true);
   expect(canSeek("linear", "true")).toBe(true);
   expect(canSeek("linear", "false")).toBe(false);
-  expect(canSeek("rapid", null)).toBe(false);
+  // The rapid bar never seeks, whatever the page says.
+  expect(canSeek("rapid", "")).toBe(false);
   expect(canSeek("rapid", "true")).toBe(false);
-  expect(canSeek("none", null)).toBe(false);
+  expect(canSeek("none", "true")).toBe(false);
 });
 
 test("a pointer on the bar is a time, clamped to the video", () => {

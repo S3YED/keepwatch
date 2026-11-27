@@ -9,6 +9,10 @@ import {
   parseBeat,
   parseTime,
   pickVariant,
+  reachEnd,
+  reachJump,
+  reachPlay,
+  reachStart,
   readUtm,
   resumeFrom,
   slug,
@@ -187,4 +191,101 @@ test("utm: only the five, trimmed", () => {
     utmCampaign: undefined,
     utmContent: undefined,
   });
+});
+
+/* Reached means played to, with sound, from somewhere already reached. A jump is not that. */
+const play = (r: ReturnType<typeof reachStart>, from: number, to: number, step = 0.25) => {
+  let out = r;
+  for (let t = from + step; t <= to + 1e-9; t += step) out = reachPlay(out, t);
+  return out;
+};
+
+test("playing from the start moves the furthest point and counts the seconds", () => {
+  const r = play(reachStart(0, 0), 0, 10);
+  expect(r.reached).toBeCloseTo(10);
+  expect(r.watched).toBeCloseTo(10);
+});
+
+test("seek forward, then play: the seconds are watched, the furthest point does not move", () => {
+  // Watched to 0:10, jumped to 2:00, played five seconds.
+  let r = play(reachStart(0, 0), 0, 10);
+  r = reachJump(r, 120);
+  expect(r.reached).toBeCloseTo(10);
+  r = play(r, 120, 125);
+  expect(Math.floor(r.reached)).toBe(10);
+  expect(r.watched).toBeCloseTo(15);
+  // So a CTA at 2:02 is not unlocked, and neither is the 25% mark of an 8-minute video.
+  expect(ctaVisible(Math.floor(r.reached), 122)).toBe(false);
+  // However long they stay out there.
+  r = play(r, 125, 300);
+  expect(Math.floor(r.reached)).toBe(10);
+  // Back to where they really were: from there the furthest point moves again.
+  r = play(reachJump(r, 8), 8, 30);
+  expect(r.reached).toBeCloseTo(30);
+});
+
+test("a jump forward inside what was already reached is just a jump", () => {
+  let r = play(reachStart(0, 0), 0, 60);
+  r = reachJump(r, 20);
+  r = reachJump(r, 55);
+  r = play(r, 55, 70);
+  expect(r.reached).toBeCloseTo(70);
+});
+
+test("seek back, then play: nothing is lost, and re-watching counts as listening", () => {
+  let r = play(reachStart(0, 0), 0, 180);
+  r = reachJump(r, 60);
+  expect(r.reached).toBeCloseTo(180);
+  r = play(r, 60, 65);
+  expect(r.reached).toBeCloseTo(180);
+  expect(r.watched).toBeCloseTo(185);
+});
+
+test("seek to the end: the video ends, but it was not completed", () => {
+  // Dragged to the very end.
+  let r = play(reachStart(0, 0), 0, 10);
+  r = reachJump(r, 466);
+  expect(reachEnd(r, 466).completed).toBe(false);
+  expect(Math.floor(reachEnd(r, 466).reach.reached)).toBe(10);
+  // Jumped to three seconds before the end and let it run out.
+  r = play(reachJump(play(reachStart(0, 0), 0, 10), 463), 463, 465.9);
+  expect(reachEnd(r, 466).completed).toBe(false);
+  expect(Math.floor(reachEnd(r, 466).reach.reached)).toBe(10);
+  // Watched to the end: completed, and the furthest point is the end, even if the last tick came early.
+  r = play(reachStart(0, 0), 0, 465);
+  const end = reachEnd(r, 466);
+  expect(end.completed).toBe(true);
+  expect(end.reach.reached).toBe(466);
+  // A provider that never told the length still completes a video watched through.
+  expect(reachEnd(r, 0).completed).toBe(true);
+});
+
+test("a chapter jump is a seek: the chapter's start is not reached until playback gets there", () => {
+  let r = play(reachStart(0, 0), 0, 30);
+  // The chapter list lands just inside the chapter (2:40 + a nudge).
+  r = play(reachJump(r, 160.05), 160.05, 200);
+  expect(Math.floor(r.reached)).toBe(30);
+  expect(ctaVisible(Math.floor(r.reached), 160)).toBe(false);
+  // A chapter that starts inside what was reached is fair game.
+  r = play(reachJump(r, 20.05), 20.05, 40);
+  expect(r.reached).toBeCloseTo(40, 1);
+});
+
+test("without a jump nothing changes: gaps, a muted stretch and a resume behave as before", () => {
+  // A late tick (a throttled tab) still moves the furthest point; only its seconds are not counted.
+  let r = play(reachStart(0, 0), 0, 10);
+  r = reachPlay(r, 40);
+  expect(r.reached).toBe(40);
+  expect(r.watched).toBeCloseTo(10);
+  // Resume at 2:00 of a video the viewer reached 2:30 in: the session starts at 2:00.
+  r = play(reachStart(120, 150), 120, 125);
+  expect(r.reached).toBeCloseTo(125);
+  // Resume at a place they had only jumped to (reached 0:30): the session knows 0:30, no more.
+  r = play(reachStart(120, 30), 120, 125);
+  expect(Math.floor(r.reached)).toBe(30);
+  // A new start in the same session never lowers what the session reached.
+  expect(reachStart(0, 0, play(reachStart(0, 0), 0, 50)).reached).toBeCloseTo(50);
+  // Going backwards in time without a jump (a provider's own loop) never lowers it either.
+  r = reachPlay(play(reachStart(0, 0), 0, 50), 3);
+  expect(r.reached).toBeCloseTo(50);
 });
